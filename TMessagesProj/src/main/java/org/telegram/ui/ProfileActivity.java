@@ -44,6 +44,7 @@ import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.ColorFilter;
+import android.graphics.LinearGradient;
 import android.graphics.Matrix;
 import android.graphics.Paint;
 import android.graphics.Path;
@@ -359,6 +360,9 @@ import me.vkryl.core.reference.ReferenceList;
 
 public class ProfileActivity extends BaseFragment implements NotificationCenter.NotificationCenterDelegate, DialogsActivity.DialogsActivityDelegate, SharedMediaLayout.SharedMediaPreloaderDelegate, ImageUpdater.ImageUpdaterDelegate, SharedMediaLayout.Delegate, MainTabsActivity.TabFragmentDelegate {
     private RecyclerListView listView;
+    // Pakoogram: палитра аватарки для адаптивного профиля и свечения.
+    private PakoogramAvatarPalette.PaletteData pakoogramPalette;
+    private PakoogramAvatarPalette.ThemedResourcesProvider pakoogramResourcesProvider;
     private RecyclerListView searchListView;
     private LinearLayoutManager layoutManager;
     private ListAdapter listAdapter;
@@ -1267,6 +1271,103 @@ public class ProfileActivity extends BaseFragment implements NotificationCenter.
         public final Matrix backgroundGradientMatrix = new Matrix();
         private final Paint backgroundPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
 
+        // Pakoogram: палитра аватарки и мягкое многослойное свечение вокруг неё.
+        private PakoogramAvatarPalette.PaletteData pakoogramPalette;
+        private final Paint pakoogramHeaderPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Paint pakoogramGlowPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final RectF pakoogramAvatarRect = new RectF();
+        private RadialGradient pakoogramGlowGradient;
+        private RadialGradient pakoogramGlowCoreGradient;
+        private int pakoogramGlowColor;
+        private float pakoogramGlowRadius = -1f;
+        private float pakoogramGlowCx, pakoogramGlowCy;
+        private float pakoogramGlowStrength = -1f;
+        private int pakoogramHeaderShaderHeight = -1;
+
+        public void setPakoogramPalette(PakoogramAvatarPalette.PaletteData palette) {
+            if (pakoogramPalette == palette) {
+                return;
+            }
+            pakoogramPalette = palette;
+            pakoogramHeaderShaderHeight = -1;
+            pakoogramGlowGradient = null;
+            pakoogramGlowCoreGradient = null;
+            invalidate();
+        }
+
+        private void ensurePakoogramHeaderShader(int height) {
+            if (pakoogramPalette == null || height <= 0) {
+                return;
+            }
+            if (pakoogramHeaderPaint.getShader() != null && pakoogramHeaderShaderHeight == height) {
+                return;
+            }
+            pakoogramHeaderShaderHeight = height;
+            pakoogramHeaderPaint.setShader(new LinearGradient(0, 0, 0, height,
+                    pakoogramPalette.getHeaderGradientTop(),
+                    pakoogramPalette.getHeaderGradientBottom(),
+                    Shader.TileMode.CLAMP));
+        }
+
+        /** Рисует мягкий ореол в доминирующем цвете аватарки: два слоя радиального градиента. */
+        private void drawPakoogramAvatarGlow(Canvas canvas, int clipBottom) {
+            final PakoogramAvatarPalette.PaletteData palette = pakoogramPalette;
+            if (palette == null || avatarContainer == null || avatarContainer.getVisibility() != VISIBLE
+                    || avatarBig != null || pinchToZoomHelper != null && pinchToZoomHelper.isInOverlayMode()) {
+                return;
+            }
+            final int brightness = PakoogramConfig.getAvatarGlowBrightness();
+            if (brightness <= 0) {
+                return;
+            }
+            if (!ViewPositionWatcher.computeRectInParent(avatarContainer, this, pakoogramAvatarRect)) {
+                return;
+            }
+            final float width = pakoogramAvatarRect.width();
+            final float height = pakoogramAvatarRect.height();
+            if (width <= 0f || height <= 0f) {
+                return;
+            }
+            final float cx = pakoogramAvatarRect.centerX();
+            final float cy = pakoogramAvatarRect.centerY();
+            final float base = Math.max(width, height) * 0.5f;
+            final float radius = base * 2.4f;
+            final float coreRadius = base * 1.35f;
+            final float strength = brightness / 100f;
+            final int glow = palette.getGlowColor(brightness);
+            if (pakoogramGlowGradient == null || pakoogramGlowColor != glow
+                    || pakoogramGlowRadius != radius || pakoogramGlowCx != cx
+                    || pakoogramGlowCy != cy || pakoogramGlowStrength != strength) {
+                pakoogramGlowColor = glow;
+                pakoogramGlowRadius = radius;
+                pakoogramGlowCx = cx;
+                pakoogramGlowCy = cy;
+                pakoogramGlowStrength = strength;
+                pakoogramGlowGradient = new RadialGradient(cx, cy, radius,
+                        new int[]{
+                                ColorUtils.setAlphaComponent(glow, Math.round(0x8A * strength)),
+                                ColorUtils.setAlphaComponent(glow, Math.round(0x3C * strength)),
+                                ColorUtils.setAlphaComponent(glow, 0)
+                        },
+                        new float[]{0f, 0.5f, 1f}, Shader.TileMode.CLAMP);
+                pakoogramGlowCoreGradient = new RadialGradient(cx, cy, coreRadius,
+                        new int[]{
+                                ColorUtils.setAlphaComponent(glow, Math.round(0x66 * strength)),
+                                ColorUtils.setAlphaComponent(glow, Math.round(0x22 * strength)),
+                                ColorUtils.setAlphaComponent(glow, 0)
+                        },
+                        new float[]{0f, 0.65f, 1f}, Shader.TileMode.CLAMP);
+            }
+            final int saveCount = canvas.save();
+            canvas.clipRect(0, 0, getMeasuredWidth(), clipBottom);
+            pakoogramGlowPaint.setShader(pakoogramGlowGradient);
+            canvas.drawCircle(cx, cy, radius, pakoogramGlowPaint);
+            pakoogramGlowPaint.setShader(pakoogramGlowCoreGradient);
+            canvas.drawCircle(cx, cy, coreRadius, pakoogramGlowPaint);
+            pakoogramGlowPaint.setShader(null);
+            canvas.restoreToCount(saveCount);
+        }
+
         public void setBackgroundColorId(MessagesController.PeerColor peerColor, boolean animated) {
             if (peerColor != null) {
                 hasColorById = true;
@@ -1392,7 +1493,8 @@ public class ProfileActivity extends BaseFragment implements NotificationCenter.
                 canvas.saveLayerAlpha(0, 0, getMeasuredWidth(), y1, (int) (0xFF * (1f - headerBlurFactor)));
             }
             if (y1 != 0) {
-                paint.setColor(currentColor);
+                final boolean pakoogramHeader = pakoogramPalette != null && !hasColorById;
+                paint.setColor(pakoogramHeader ? pakoogramPalette.getHeaderColor() : currentColor);
                 updateBackgroundPaint();
                 final float progressToGradient = (playProfileAnimation == 0 ? 1f : avatarAnimationProgress) * hasColorAnimated.set(hasColorById);
                 if (progressToGradient < 1) {
@@ -1402,6 +1504,11 @@ public class ProfileActivity extends BaseFragment implements NotificationCenter.
                     backgroundPaint.setAlpha((int) (0xFF * progressToGradient));
                     canvas.drawRect(0, 0, getMeasuredWidth(), y1, backgroundPaint);
                 }
+                if (pakoogramHeader) {
+                    ensurePakoogramHeaderShader(y1);
+                    canvas.drawRect(0, 0, getMeasuredWidth(), y1, pakoogramHeaderPaint);
+                }
+                drawPakoogramAvatarGlow(canvas, y1);
                 if (hasEmoji && !capturing) {
                     final float loadedScale = emojiLoadedT.set(isEmojiLoaded());
                     boolean shoudIgnore = openAnimationInProgress && playProfileAnimation == 2;
@@ -4072,11 +4179,17 @@ public class ProfileActivity extends BaseFragment implements NotificationCenter.
 
         createActionBarMenu(false);
 
-        listAdapter = new ListAdapter(context);
-        searchAdapter = new SearchAdapter(this, context);
         avatarDrawable = new AvatarDrawable();
         avatarDrawable.setScaleSize(100f / 42f);
         avatarDrawable.setProfile(true);
+        // Pakoogram: палитра аватарки и адаптивные фоны профиля.
+        if (PakoogramConfig.isAdaptiveChatThemeEnabled()) {
+            pakoogramResourcesProvider = new PakoogramAvatarPalette.ThemedResourcesProvider(resourcesProvider);
+            refreshPakoogramPalette();
+            resourcesProvider = pakoogramResourcesProvider;
+        }
+        listAdapter = new ListAdapter(context);
+        searchAdapter = new SearchAdapter(this, context);
 
         fragmentView.setWillNotDraw(false);
         contentView = ((NestedFrameLayout) fragmentView);
@@ -5950,6 +6063,8 @@ public class ProfileActivity extends BaseFragment implements NotificationCenter.
         setupHeaderGlass();
 
         ViewCompat.setOnApplyWindowInsetsListener(fragmentView, this::onApplyWindowInsets);
+        refreshPakoogramPalette();
+        applyPakoogramProfilePalette();
         return fragmentView;
     }
 
@@ -9342,6 +9457,7 @@ public class ProfileActivity extends BaseFragment implements NotificationCenter.
             if (userId != 0) {
                 if (infoChanged) {
                     updateProfileData(true);
+                    refreshPakoogramPalette();
                 }
                 if ((mask & MessagesController.UPDATE_MASK_PHONE) != 0) {
                     if (listView != null) {
@@ -9359,6 +9475,7 @@ public class ProfileActivity extends BaseFragment implements NotificationCenter.
                         updateOnlineCount(true);
                     }
                     updateProfileData(true);
+                    refreshPakoogramPalette();
                 }
                 if (infoChanged) {
                     if (listView != null) {
@@ -10663,6 +10780,75 @@ public class ProfileActivity extends BaseFragment implements NotificationCenter.
     }
 
     private final RectF previousAvatarRect = new RectF();
+
+    /**
+     * Pakoogram: пересчитывает палитру аватарки открытого профиля.
+     *
+     * <p>Сначала используется настоящий битмап аватарки (если он уже загружен),
+     * иначе — цвета сгенерированной {@link AvatarDrawable}. Результат складывается
+     * в общий кэш {@link PakoogramAvatarPalette}, поэтому профиль, переписка и
+     * список чатов получают одинаковые оттенки.</p>
+     */
+    private void refreshPakoogramPalette() {
+        if (!PakoogramConfig.isAdaptiveChatThemeEnabled() || avatarDrawable == null) {
+            return;
+        }
+        if (userId != 0) {
+            TLRPC.User user = getMessagesController().getUser(userId);
+            if (user != null) {
+                avatarDrawable.setInfo(currentAccount, user);
+            }
+        } else if (chatId != 0) {
+            TLRPC.Chat chat = getMessagesController().getChat(chatId);
+            if (chat != null) {
+                avatarDrawable.setInfo(currentAccount, chat);
+            }
+        }
+        final long dialogId = userId != 0 ? userId : -chatId;
+        final PakoogramAvatarPalette.PaletteData palette = PakoogramAvatarPalette.getOrCreate(
+                dialogId,
+                avatarImage != null ? avatarImage.getImageReceiver() : null,
+                avatarDrawable);
+        if (palette == null) {
+            return;
+        }
+        final boolean changed = pakoogramPalette != palette;
+        pakoogramPalette = palette;
+        if (pakoogramResourcesProvider != null) {
+            pakoogramResourcesProvider.setPalette(palette, Theme.isCurrentThemeDark());
+        }
+        if (changed) {
+            applyPakoogramProfilePalette();
+        }
+    }
+
+    /** Pakoogram: тонирует фон экрана, карточки разделов и шапку профиля. */
+    private void applyPakoogramProfilePalette() {
+        if (!PakoogramConfig.isAdaptiveChatThemeEnabled() || pakoogramPalette == null) {
+            return;
+        }
+        final boolean dark = Theme.isCurrentThemeDark();
+        final int screen = pakoogramPalette.getProfileBackgroundColor(dark);
+        final int cards = pakoogramPalette.getProfileCardColor(dark);
+
+        if (listView != null) {
+            listView.setBackgroundColor(screen);
+            listView.invalidateViews();
+        }
+        if (searchListView != null) {
+            searchListView.setBackgroundColor(cards);
+        }
+        if (topView != null) {
+            topView.setPakoogramPalette(pakoogramPalette);
+        }
+        if (actionBar != null) {
+            actionBar.setBackgroundColor(ColorUtils.setAlphaComponent(
+                    pakoogramPalette.getGlassPanelColor(dark), 0x33));
+        }
+        if (listAdapter != null) {
+            listAdapter.notifyDataSetChanged();
+        }
+    }
 
     private int getAverageColor(ImageReceiver imageReceiver) {
         if (imageReceiver.getDrawable() instanceof VectorAvatarThumbDrawable) {

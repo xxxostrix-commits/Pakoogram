@@ -4876,6 +4876,26 @@ public class ChatActivityEnterView extends FrameLayout implements
     public boolean isStories;
 
     Paint backgroundPaint = new Paint();
+    // Pakoogram: оттенок матового стекла нижней панели ввода.
+    private int pakoogramPanelTintColor;
+    private float pakoogramPanelTintStrength;
+
+    /**
+     * Pakoogram: задаёт оттенок стеклянной панели ввода из палитры аватарки.
+     *
+     * @param color    цвет без обязательной альфы
+     * @param strength сила подмешивания, 0..1
+     */
+    public void setPakoogramPanelTint(int color, float strength) {
+        final float clamped = Math.max(0f, Math.min(1f, strength));
+        if (pakoogramPanelTintColor == color && pakoogramPanelTintStrength == clamped) {
+            return;
+        }
+        pakoogramPanelTintColor = color;
+        pakoogramPanelTintStrength = clamped;
+        invalidate();
+    }
+
     private float composeShadowAlpha = 1f;
     private Rect blurBounds = new Rect();
     @Override
@@ -4900,14 +4920,25 @@ public class ChatActivityEnterView extends FrameLayout implements
             Theme.chat_composeShadowDrawable.draw(canvas);
         }
 
+        int panelColor = getThemedColor(Theme.key_chat_messagePanelBackground);
+        final boolean pakoogramTint = pakoogramPanelTintColor != 0 && pakoogramPanelTintStrength > 0f;
+        if (pakoogramTint) {
+            panelColor = ColorUtils.blendARGB(panelColor,
+                    ColorUtils.setAlphaComponent(pakoogramPanelTintColor, 255),
+                    pakoogramPanelTintStrength);
+            panelColor = ColorUtils.setAlphaComponent(panelColor, 0xE0);
+        }
         if (allowBlur) {
-            backgroundPaint.setColor(getThemedColor(Theme.key_chat_messagePanelBackground));
+            backgroundPaint.setColor(panelColor);
             if (SharedConfig.chatBlurEnabled() && sizeNotifierLayout != null) {
                 blurBounds.set(0, bottom, getWidth(), getHeight());
                 sizeNotifierLayout.drawBlurRect(canvas, getTop(), blurBounds, backgroundPaint, false);
             } else {
                 canvas.drawRect(0, bottom, getWidth(), getHeight(), backgroundPaint);
             }
+        } else if (pakoogramTint) {
+            backgroundPaint.setColor(panelColor);
+            canvas.drawRect(0, bottom, getWidth(), getHeight(), backgroundPaint);
         } else {
             canvas.drawRect(0, bottom, getWidth(), getHeight(), getThemedPaint(Theme.key_paint_chatComposeBackground));
         }

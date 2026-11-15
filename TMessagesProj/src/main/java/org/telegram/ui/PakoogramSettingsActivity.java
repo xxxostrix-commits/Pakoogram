@@ -64,8 +64,11 @@ public class PakoogramSettingsActivity extends BaseFragment {
     private static final int ROW_SPRING_PHYSICS = 7;
     private static final int ROW_FLOATING_PANELS = 8;
     private static final int ROW_GHOST_MODE = 9;
-    private static final int ROW_HEADER_ABOUT = 10;
-    private static final int ROW_COUNT = 11;
+    private static final int ROW_ADAPTIVE_CHAT_THEME = 10;
+    private static final int ROW_CHAT_BACKGROUND_SATURATION = 11;
+    private static final int ROW_AVATAR_GLOW_BRIGHTNESS = 12;
+    private static final int ROW_HEADER_ABOUT = 13;
+    private static final int ROW_COUNT = 14;
 
     private static final int[] BLUR_INTENSITY_VALUES =
             {0, 10, 20, 30, 40, 50, 60, 70, 75, 80, 85, 90, 95, 100};
@@ -113,6 +116,15 @@ public class PakoogramSettingsActivity extends BaseFragment {
             case ROW_GLASS_CHAT_CARDS: {
                 boolean enabled = !PakoogramConfig.isGlassChatCardsEnabled();
                 PakoogramConfig.setGlassChatCardsEnabled(enabled);
+                if (view instanceof TextCheckCell) {
+                    ((TextCheckCell) view).setChecked(enabled);
+                }
+                notifyDialogsListChanged();
+                break;
+            }
+            case ROW_ADAPTIVE_CHAT_THEME: {
+                boolean enabled = !PakoogramConfig.isAdaptiveChatThemeEnabled();
+                PakoogramConfig.setAdaptiveChatThemeEnabled(enabled);
                 if (view instanceof TextCheckCell) {
                     ((TextCheckCell) view).setChecked(enabled);
                 }
@@ -243,9 +255,12 @@ public class PakoogramSettingsActivity extends BaseFragment {
                 case ROW_FLOATING_PANELS:
                 case ROW_GHOST_MODE:
                 case ROW_GLASS_CHAT_CARDS:
+                case ROW_ADAPTIVE_CHAT_THEME:
                     return VIEW_TYPE_CHECK;
                 case ROW_CHAT_CARD_GRADIENT:
                 case ROW_CHAT_CARD_CORNER_RADIUS:
+                case ROW_CHAT_BACKGROUND_SATURATION:
+                case ROW_AVATAR_GLOW_BRIGHTNESS:
                     return VIEW_TYPE_SLIDER;
                 default:
                     return VIEW_TYPE_SETTINGS;
@@ -299,6 +314,9 @@ public class PakoogramSettingsActivity extends BaseFragment {
                     if (position == ROW_GLASS_CHAT_CARDS) {
                         checkCell.setTextAndCheck("Стеклянные карточки чатов",
                                 PakoogramConfig.isGlassChatCardsEnabled(), false);
+                    } else if (position == ROW_ADAPTIVE_CHAT_THEME) {
+                        checkCell.setTextAndCheck("Адаптивная тема чата и профиля",
+                                PakoogramConfig.isAdaptiveChatThemeEnabled(), false);
                     } else if (position == ROW_SPRING_PHYSICS) {
                         checkCell.setTextAndCheck("Пружинная анимация",
                                 PakoogramConfig.isSpringPhysicsEnabled(), false);
@@ -330,7 +348,7 @@ public class PakoogramSettingsActivity extends BaseFragment {
                                         notifyDialogsListChanged();
                                     }
                                 });
-                    } else {
+                    } else if (position == ROW_CHAT_CARD_CORNER_RADIUS) {
                         sliderCell.setContent("Скругление карточек", " dp",
                                 PakoogramConfig.MIN_CHAT_CARD_CORNER_RADIUS,
                                 PakoogramConfig.MAX_CHAT_CARD_CORNER_RADIUS,
@@ -339,6 +357,40 @@ public class PakoogramSettingsActivity extends BaseFragment {
                                     @Override
                                     public void onValueSelected(int value) {
                                         PakoogramConfig.setChatCardCornerRadius(value);
+                                    }
+                                },
+                                new Runnable() {
+                                    @Override
+                                    public void run() {
+                                        notifyDialogsListChanged();
+                                    }
+                                });
+                    } else if (position == ROW_CHAT_BACKGROUND_SATURATION) {
+                        sliderCell.setContent("Насыщенность фона чата", "%",
+                                PakoogramConfig.MIN_CHAT_BACKGROUND_SATURATION,
+                                PakoogramConfig.MAX_CHAT_BACKGROUND_SATURATION,
+                                PakoogramConfig.getChatBackgroundSaturation(),
+                                new IntValueListener() {
+                                    @Override
+                                    public void onValueSelected(int value) {
+                                        PakoogramConfig.setChatBackgroundSaturation(value);
+                                    }
+                                },
+                                new Runnable() {
+                                    @Override
+                                    public void run() {
+                                        notifyDialogsListChanged();
+                                    }
+                                });
+                    } else {
+                        sliderCell.setContent("Яркость свечения аватарки", "%",
+                                PakoogramConfig.MIN_AVATAR_GLOW_BRIGHTNESS,
+                                PakoogramConfig.MAX_AVATAR_GLOW_BRIGHTNESS,
+                                PakoogramConfig.getAvatarGlowBrightness(),
+                                new IntValueListener() {
+                                    @Override
+                                    public void onValueSelected(int value) {
+                                        PakoogramConfig.setAvatarGlowBrightness(value);
                                     }
                                 },
                                 new Runnable() {

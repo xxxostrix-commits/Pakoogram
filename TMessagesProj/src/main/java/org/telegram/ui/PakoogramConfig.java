@@ -29,6 +29,12 @@ public class PakoogramConfig {
     public static final String KEY_CHAT_CARD_GRADIENT_INTENSITY = "chatCardGradientIntensity";
     /** Радиус скругления карточек чатов в dp. */
     public static final String KEY_CHAT_CARD_CORNER_RADIUS = "chatCardCornerRadius";
+    /** Адаптивная тема чата и профиля по палитре аватарки собеседника. */
+    public static final String KEY_ADAPTIVE_CHAT_THEME = "adaptiveChatTheme";
+    /** Насыщенность градиента фона переписки, 0..100%. */
+    public static final String KEY_CHAT_BACKGROUND_SATURATION = "chatBackgroundSaturation";
+    /** Яркость свечения аватарки в профиле, 0..100%. */
+    public static final String KEY_AVATAR_GLOW_BRIGHTNESS = "avatarGlowBrightness";
 
     public static final int DEFAULT_BLUR_INTENSITY = 85;
     public static final int DEFAULT_CORNER_RADIUS = 20;
@@ -38,6 +44,9 @@ public class PakoogramConfig {
     public static final boolean DEFAULT_GLASS_CHAT_CARDS = true;
     public static final int DEFAULT_CHAT_CARD_GRADIENT_INTENSITY = 100;
     public static final int DEFAULT_CHAT_CARD_CORNER_RADIUS = 16;
+    public static final boolean DEFAULT_ADAPTIVE_CHAT_THEME = true;
+    public static final int DEFAULT_CHAT_BACKGROUND_SATURATION = 55;
+    public static final int DEFAULT_AVATAR_GLOW_BRIGHTNESS = 70;
 
     public static final int MIN_BLUR_INTENSITY = 0;
     public static final int MAX_BLUR_INTENSITY = 100;
@@ -47,6 +56,10 @@ public class PakoogramConfig {
     public static final int MAX_CHAT_CARD_GRADIENT_INTENSITY = 100;
     public static final int MIN_CHAT_CARD_CORNER_RADIUS = 0;
     public static final int MAX_CHAT_CARD_CORNER_RADIUS = 24;
+    public static final int MIN_CHAT_BACKGROUND_SATURATION = 0;
+    public static final int MAX_CHAT_BACKGROUND_SATURATION = 100;
+    public static final int MIN_AVATAR_GLOW_BRIGHTNESS = 0;
+    public static final int MAX_AVATAR_GLOW_BRIGHTNESS = 100;
 
     private static SharedPreferences preferences;
 
@@ -208,6 +221,49 @@ public class PakoogramConfig {
                 .apply();
     }
 
+    /* ------------------------------------------------------ adaptiveChatTheme */
+
+    /** Адаптивная тема чата и профиля, по умолчанию {@value #DEFAULT_ADAPTIVE_CHAT_THEME}. */
+    public static boolean isAdaptiveChatThemeEnabled() {
+        return getPreferences().getBoolean(KEY_ADAPTIVE_CHAT_THEME, DEFAULT_ADAPTIVE_CHAT_THEME);
+    }
+
+    public static void setAdaptiveChatThemeEnabled(boolean enabled) {
+        getPreferences().edit().putBoolean(KEY_ADAPTIVE_CHAT_THEME, enabled).apply();
+    }
+
+    /* ------------------------------------------------ chatBackgroundSaturation */
+
+    /** Насыщенность фона переписки в процентах, по умолчанию {@value #DEFAULT_CHAT_BACKGROUND_SATURATION}. */
+    public static int getChatBackgroundSaturation() {
+        return clamp(getPreferences().getInt(KEY_CHAT_BACKGROUND_SATURATION, DEFAULT_CHAT_BACKGROUND_SATURATION),
+                MIN_CHAT_BACKGROUND_SATURATION, MAX_CHAT_BACKGROUND_SATURATION);
+    }
+
+    /** @param value процент насыщенности, зажимается в [{@value #MIN_CHAT_BACKGROUND_SATURATION}; {@value #MAX_CHAT_BACKGROUND_SATURATION}] */
+    public static void setChatBackgroundSaturation(int value) {
+        getPreferences().edit()
+                .putInt(KEY_CHAT_BACKGROUND_SATURATION, clamp(value,
+                        MIN_CHAT_BACKGROUND_SATURATION, MAX_CHAT_BACKGROUND_SATURATION))
+                .apply();
+    }
+
+    /* ----------------------------------------------------- avatarGlowBrightness */
+
+    /** Яркость свечения аватарки в процентах, по умолчанию {@value #DEFAULT_AVATAR_GLOW_BRIGHTNESS}. */
+    public static int getAvatarGlowBrightness() {
+        return clamp(getPreferences().getInt(KEY_AVATAR_GLOW_BRIGHTNESS, DEFAULT_AVATAR_GLOW_BRIGHTNESS),
+                MIN_AVATAR_GLOW_BRIGHTNESS, MAX_AVATAR_GLOW_BRIGHTNESS);
+    }
+
+    /** @param value процент яркости, зажимается в [{@value #MIN_AVATAR_GLOW_BRIGHTNESS}; {@value #MAX_AVATAR_GLOW_BRIGHTNESS}] */
+    public static void setAvatarGlowBrightness(int value) {
+        getPreferences().edit()
+                .putInt(KEY_AVATAR_GLOW_BRIGHTNESS, clamp(value,
+                        MIN_AVATAR_GLOW_BRIGHTNESS, MAX_AVATAR_GLOW_BRIGHTNESS))
+                .apply();
+    }
+
     /* -------------------------------------------------------------------- сброс */
 
     /** Сбрасывает все настройки Pakoogram к значениям по умолчанию. */
@@ -221,6 +277,9 @@ public class PakoogramConfig {
                 .putBoolean(KEY_GLASS_CHAT_CARDS, DEFAULT_GLASS_CHAT_CARDS)
                 .putInt(KEY_CHAT_CARD_GRADIENT_INTENSITY, DEFAULT_CHAT_CARD_GRADIENT_INTENSITY)
                 .putInt(KEY_CHAT_CARD_CORNER_RADIUS, DEFAULT_CHAT_CARD_CORNER_RADIUS)
+                .putBoolean(KEY_ADAPTIVE_CHAT_THEME, DEFAULT_ADAPTIVE_CHAT_THEME)
+                .putInt(KEY_CHAT_BACKGROUND_SATURATION, DEFAULT_CHAT_BACKGROUND_SATURATION)
+                .putInt(KEY_AVATAR_GLOW_BRIGHTNESS, DEFAULT_AVATAR_GLOW_BRIGHTNESS)
                 .apply();
     }
 }

@@ -55,6 +55,7 @@ import android.graphics.Typeface;
 import android.graphics.drawable.BitmapDrawable;
 import android.graphics.drawable.ColorDrawable;
 import android.graphics.drawable.Drawable;
+import android.graphics.drawable.GradientDrawable;
 import android.media.AudioManager;
 import android.net.Uri;
 import android.os.Build;
@@ -537,6 +538,10 @@ public class ChatActivity extends BaseFragment implements
     private BusinessLinksEmptyView businessLinksEmptyView;
     private ViewPositionWatcher viewPositionWatcher;
     public ChatActivityFragmentView contentView;
+    // Pakoogram: единая палитра аватарки для адаптивной темы переписки.
+    private PakoogramAvatarPalette.PaletteData pakoogramPalette;
+    // Pakoogram: градиент фона переписки, построенный по палитре аватарки.
+    private Drawable pakoogramChatBackground;
     private ChatBigEmptyView bigEmptyView;
     private ArrayList<View> actionModeViews = new ArrayList<>();
     public ChatAvatarContainer avatarContainer;
@@ -3817,15 +3822,18 @@ public class ChatActivity extends BaseFragment implements
         blurredBackgroundColorProvider = new BlurredBackgroundColorProviderThemed(themeDelegate, Theme.key_chat_messagePanelBackground) {
             @Override
             public int getBackgroundColor() {
+                final int color;
                 if (!BlurredBackgroundProviderImpl.checkBlurEnabled(currentAccount, themeDelegate)) {
-                    return ColorUtils.setAlphaComponent(getThemedColor(Theme.key_chat_messagePanelBackground), 255);
+                    color = ColorUtils.setAlphaComponent(getThemedColor(Theme.key_chat_messagePanelBackground), 255);
+                } else {
+                    final boolean isThemeLight = themeDelegate != null && !themeDelegate.isDark();
+                    if (isThemeLight) {
+                        color = ColorUtils.setAlphaComponent(super.getBackgroundColor(), 216);
+                    } else {
+                        color = super.getBackgroundColor();
+                    }
                 }
-
-                final boolean isThemeLight = themeDelegate != null && !themeDelegate.isDark();
-                if (isThemeLight) {
-                    return ColorUtils.setAlphaComponent(super.getBackgroundColor(), 216);
-                }
-                return super.getBackgroundColor();
+                return pakoogramTintPanelColor(color);
             }
         };
         blurredBackgroundColorProvider.setCompactOutlineKey(Theme.key_chat_compact_inputGlassOutline);
@@ -9434,6 +9442,8 @@ public class ChatActivity extends BaseFragment implements
                 }
             });
         }
+
+        applyPakoogramAdaptiveTheme();
 
         return fragmentView;
     }
@@ -20368,6 +20378,9 @@ public class ChatActivity extends BaseFragment implements
         }
 
         protected Drawable getNewDrawable() {
+            if (pakoogramChatBackground != null) {
+                return pakoogramChatBackground;
+            }
             if (isCompactMode()) {
                 return getCompactBackground();
             }
@@ -20386,6 +20399,9 @@ public class ChatActivity extends BaseFragment implements
         }
 
         protected boolean getNewDrawableMotion() {
+            if (pakoogramChatBackground != null) {
+                return false;
+            }
             if (themeDelegate.wallpaper == null) {
                 return super.getNewDrawableMotion();
             }
@@ -21461,6 +21477,8 @@ public class ChatActivity extends BaseFragment implements
         }
         if (avatarContainer != null) {
             avatarContainer.checkAndUpdateAvatar();
+            // Pakoogram: аватарка могла обновиться — обновляем адаптивную тему.
+            applyPakoogramAdaptiveTheme();
         }
     }
 
@@ -45895,8 +45913,71 @@ public class ChatActivity extends BaseFragment implements
         }
     }
 
+    /** Pakoogram: подмешивает оттенок палитры в цвет матовой стеклянной панели. */
+    private int pakoogramTintPanelColor(int color) {
+        final PakoogramAvatarPalette.PaletteData palette = pakoogramPalette;
+        if (palette == null) {
+            return color;
+        }
+        final int glass = ColorUtils.setAlphaComponent(
+                palette.getGlassPanelColor(Theme.isCurrentThemeDark()), 255);
+        final int blended = ColorUtils.blendARGB(ColorUtils.setAlphaComponent(color, 255), glass, 0.65f);
+        final int alpha = Math.max(Color.alpha(color), 0xD8);
+        return ColorUtils.setAlphaComponent(blended, alpha);
+    }
+
+    /**
+     * Pakoogram: применяет адаптивную тему переписки.
+     *
+     * <p>Фон переписки заменяется мягким тёмным градиентом в оттенках аватарки
+     * собеседника (насыщенность регулируется в настройках), а шапка и панель ввода
+     * получают полупрозрачный матовый оттенок той же палитры. Палитра берётся из
+     * общего кэша {@link PakoogramAvatarPalette}, поэтому цвета совпадают с карточками
+     * в списке чатов и с профилем.</p>
+     */
+    private void applyPakoogramAdaptiveTheme() {
+        if (!PakoogramConfig.isAdaptiveChatThemeEnabled() || dialog_id == 0) {
+            return;
+        }
+        final ImageReceiver receiver = avatarContainer != null && avatarContainer.avatarImageView != null
+                ? avatarContainer.avatarImageView.getImageReceiver() : null;
+        final PakoogramAvatarPalette.PaletteData palette =
+                PakoogramAvatarPalette.getOrCreate(getDialogId(), receiver, null);
+        if (palette == null || palette.getDominantColor() == 0) {
+            return;
+        }
+        pakoogramPalette = palette;
+
+        final boolean dark = Theme.isCurrentThemeDark();
+        final int glass = palette.getGlassPanelColor(dark);
+
+        if (contentView != null) {
+            final int saturation = PakoogramConfig.getChatBackgroundSaturation();
+            final int top = palette.getChatBackgroundTop(saturation);
+            final int bottom = palette.getChatBackgroundBottom(saturation);
+            if (pakoogramChatBackground instanceof GradientDrawable) {
+                ((GradientDrawable) pakoogramChatBackground).setColors(new int[]{top, bottom});
+            } else {
+                pakoogramChatBackground = new GradientDrawable(
+                        GradientDrawable.Orientation.TOP_BOTTOM, new int[]{top, bottom});
+                contentView.setBackgroundImage(pakoogramChatBackground, false);
+            }
+            contentView.invalidateBackground();
+        }
+
+        if (actionBar != null) {
+            actionBar.setBackgroundColor(ColorUtils.setAlphaComponent(glass, 0xD9));
+        }
+        if (chatActivityEnterView != null) {
+            chatActivityEnterView.setPakoogramPanelTint(glass, 0.7f);
+        }
+        if (chatInputViewsContainer != null) {
+            chatInputViewsContainer.invalidate();
+        }
+    }
+
     private void updateBackground() {
-        if (contentView == null || parentThemeDelegate != null) {
+        if (contentView == null || parentThemeDelegate != null || pakoogramChatBackground != null) {
             return;
         }
         if (themeDelegate.backgroundDrawable != null && contentView.getBackgroundImage() != null) {
