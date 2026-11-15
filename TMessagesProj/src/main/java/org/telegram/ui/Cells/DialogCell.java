@@ -46,6 +46,7 @@ import android.text.TextUtils;
 import android.text.style.ClickableSpan;
 import android.text.style.ReplacementSpan;
 import android.text.style.StyleSpan;
+import android.util.LruCache;
 import android.view.Gravity;
 import android.view.HapticFeedbackConstants;
 import android.view.MotionEvent;
@@ -132,6 +133,7 @@ import org.telegram.ui.Components.dialogs.DialogMediaIconsHelper;
 import org.telegram.ui.Components.spoilers.SpoilerEffect;
 import org.telegram.ui.DialogsActivity;
 import org.telegram.ui.FilterCreateActivity;
+import org.telegram.ui.PakoogramConfig;
 import org.telegram.ui.RightSlidingDialogContainer;
 import org.telegram.ui.Stars.StarsIntroActivity;
 import org.telegram.ui.Stories.StoriesListPlaceProvider;
@@ -546,11 +548,32 @@ public class DialogCell extends BaseCell implements StoriesListPlaceProvider.Ava
     public ImageReceiver avatarImage = new ImageReceiver(this);
     private PhotoBubbleClip bubbleClip;
     private AvatarDrawable avatarDrawable = new AvatarDrawable();
-    // Pakoogram: поля для тонировки карточки диалога цветом собеседника
-    private final Paint pakoogramTintPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
-    private int pakoogramTintColor;
-    private long pakoogramTintDialogId = Long.MIN_VALUE;
-    private Bitmap pakoogramTintBitmap;
+    // Pakoogram: поля для «стеклянных» карточек диалогов
+    private static final int PAKOGRAM_CARD_MARGIN_HORIZONTAL = 8;
+    private static final float PAKOGRAM_CARD_MARGIN_VERTICAL = 2.5f;
+    private static final float PAKOGRAM_CARD_STROKE_WIDTH = 1f;
+    private static final int PAKOGRAM_CARD_BACKGROUND_ALPHA = 0x66;
+    private static final int PAKOGRAM_CARD_GRADIENT_START_ALPHA = 0x59;   // ~35%
+    private static final int PAKOGRAM_CARD_GRADIENT_MIDDLE_ALPHA = 0x29;  // ~16%
+    private static final int PAKOGRAM_CARD_GRADIENT_END_ALPHA = 0x0F;     // ~6%
+    private static final int PAKOGRAM_CARD_STROKE_START_COLOR = 0x38FFFFFF; // ~22% белого
+    private static final int PAKOGRAM_CARD_STROKE_END_COLOR = 0x00FFFFFF;
+    private static final int PAKOGRAM_DOMINANT_COLOR_CACHE_SIZE = 512;
+
+    private static final LruCache<Long, Integer> pakoogramDominantColors = new LruCache<>(PAKOGRAM_DOMINANT_COLOR_CACHE_SIZE);
+    private static final float[] pakoogramHsv = new float[3];
+
+    private final Paint pakoogramCardPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final Paint pakoogramCardGradientPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final Paint pakoogramCardStrokePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final RectF pakoogramCardRect = new RectF();
+    private final RectF pakoogramCardStrokeRect = new RectF();
+    private LinearGradient pakoogramCardGradient;
+    private int pakoogramCardGradientColor;
+    private int pakoogramCardGradientWidth = -1;
+    private int pakoogramCardGradientHeight = -1;
+    private int pakoogramCardGradientIntensity = -1;
+    private float pakoogramCardGradientRadius = -1f;
     private boolean animatingArchiveAvatar;
     private float animatingArchiveAvatarProgress;
     private BounceInterpolator interpolator = new BounceInterpolator();
@@ -3893,48 +3916,191 @@ public class DialogCell extends BaseCell implements StoriesListPlaceProvider.Ava
     private int archiveFadeGradientDrawableColor;
 
     /**
-     * Pakoogram: возвращает цвет, которым тонируется карточка диалога.
+     * Pakoogram: возвращает цвет, которым подсвечивается карточка диалога.
      *
-     * <p>Приоритет: доминирующий цвет аватарки (если у чата есть фото) → цвет
-     * автоматически сгенерированной аватарки (он выводится из имени) → цвет имени
-     * из текущей темы. Значение кешируется на диалог, чтобы не пересчитывать
-     * пиксели аватарки на каждом кадре.</p>
+     * <p>Приоритет: доминирующий цвет реального битмапа аватарки (усреднение ярких
+     * и насыщенных пикселей) → цвет автоматически сгенерированной аватарки (он
+     * выводится из имени) → цвет имени из текущей темы. Результат для битмапа
+     * кешируется по {@code dialog_id}, чтобы не пересчитывать пиксели на каждом
+     * кадре при скролле.</p>
      */
     private int getPakoogramTintColor() {
-        Bitmap bitmap = avatarImage.getBitmap();
-        if (pakoogramTintBitmap != bitmap || pakoogramTintDialogId != currentDialogId) {
-            pakoogramTintBitmap = bitmap;
-            pakoogramTintDialogId = currentDialogId;
-            int color = 0;
-            if (bitmap != null && !bitmap.isRecycled()) {
-                color = AndroidUtilities.getDominantColor(bitmap);
+        final Bitmap bitmap = avatarImage.getBitmap();
+        if (bitmap != null && !bitmap.isRecycled()) {
+            if (currentDialogId != 0) {
+                final Integer cached = pakoogramDominantColors.get(currentDialogId);
+                if (cached != null) {
+                    return cached;
+                }
             }
-            if (color == 0 && avatarImage.getDrawable() instanceof VectorAvatarThumbDrawable) {
-                color = ((VectorAvatarThumbDrawable) avatarImage.getDrawable()).gradientTools.getAverageColor();
+            final int color = extractPakoogramDominantColor(bitmap);
+            if (color != 0) {
+                if (currentDialogId != 0) {
+                    pakoogramDominantColors.put(currentDialogId, color);
+                }
+                return color;
             }
-            if (color == 0 && avatarDrawable != null) {
-                color = avatarDrawable.getColor2();
-            }
-            if (color == 0) {
-                color = Theme.getColor(Theme.key_chats_name, resourcesProvider);
-            }
-            pakoogramTintColor = color;
         }
-        return pakoogramTintColor;
+        if (avatarImage.getDrawable() instanceof VectorAvatarThumbDrawable) {
+            final int color = ((VectorAvatarThumbDrawable) avatarImage.getDrawable()).gradientTools.getAverageColor();
+            if (color != 0) {
+                return color;
+            }
+        }
+        if (avatarDrawable != null) {
+            final int color = avatarDrawable.getColor2();
+            if (color != 0) {
+                return color;
+            }
+        }
+        return Theme.getColor(Theme.key_chats_name, resourcesProvider);
     }
 
-    /** Pakoogram: заливает фон ячейки цветом собеседника с прозрачностью около 13%. */
-    private void drawPakoogramTint(Canvas canvas) {
-        if (translationX != 0 || drawArchive) {
+    /**
+     * Pakoogram: вычисляет доминирующий цвет битмапа, усредняя только яркие и
+     * насыщенные пиксели (бледный фон и тёмные края не влияют на результат).
+     *
+     * @return цвет в формате {@link Color#rgb(int, int, int)} или {@code 0}, если
+     *         выделить цвет не удалось.
+     */
+    private static int extractPakoogramDominantColor(Bitmap bitmap) {
+        if (bitmap == null || bitmap.isRecycled() || bitmap.getWidth() <= 0 || bitmap.getHeight() <= 0) {
+            return 0;
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && bitmap.getConfig() == Bitmap.Config.HARDWARE) {
+            return 0;
+        }
+        final int samples = 24;
+        final float stepX = Math.max(1f, bitmap.getWidth() / (float) samples);
+        final float stepY = Math.max(1f, bitmap.getHeight() / (float) samples);
+        float red = 0f, green = 0f, blue = 0f, weightSum = 0f;
+        try {
+            for (int y = 0; y < samples; y++) {
+                final int pixelY = Math.min(bitmap.getHeight() - 1, (int) (y * stepY));
+                for (int x = 0; x < samples; x++) {
+                    final int pixelX = Math.min(bitmap.getWidth() - 1, (int) (x * stepX));
+                    final int pixel = bitmap.getPixel(pixelX, pixelY);
+                    if (Color.alpha(pixel) < 160) {
+                        continue;
+                    }
+                    final int pixelRed = Color.red(pixel);
+                    final int pixelGreen = Color.green(pixel);
+                    final int pixelBlue = Color.blue(pixel);
+                    Color.RGBToHSV(pixelRed, pixelGreen, pixelBlue, pakoogramHsv);
+                    if (pakoogramHsv[1] < 0.25f || pakoogramHsv[2] < 0.3f) {
+                        continue;
+                    }
+                    final float weight = pakoogramHsv[1] * pakoogramHsv[2];
+                    red += pixelRed * weight;
+                    green += pixelGreen * weight;
+                    blue += pixelBlue * weight;
+                    weightSum += weight;
+                }
+            }
+        } catch (Exception ignore) {
+            return 0;
+        }
+        if (weightSum <= 0f) {
+            return 0;
+        }
+        return Color.rgb(
+                Math.min(255, Math.round(red / weightSum)),
+                Math.min(255, Math.round(green / weightSum)),
+                Math.min(255, Math.round(blue / weightSum)));
+    }
+
+    /** Pakoogram: пересоздаёт шейдеры карточки, если изменился цвет, размер или настройки. */
+    @SuppressLint("DrawAllocation")
+    private void ensurePakoogramCardShaders(int color, int intensity, float radius) {
+        final int width = Math.round(pakoogramCardRect.width());
+        final int height = Math.round(pakoogramCardRect.height());
+        if (pakoogramCardGradient != null
+                && pakoogramCardGradientColor == color
+                && pakoogramCardGradientWidth == width
+                && pakoogramCardGradientHeight == height
+                && pakoogramCardGradientIntensity == intensity
+                && pakoogramCardGradientRadius == radius) {
+            return;
+        }
+        pakoogramCardGradientColor = color;
+        pakoogramCardGradientWidth = width;
+        pakoogramCardGradientHeight = height;
+        pakoogramCardGradientIntensity = intensity;
+        pakoogramCardGradientRadius = radius;
+
+        final float factor = Math.max(0f, Math.min(1f, intensity / 100f));
+        final int red = Color.red(color);
+        final int green = Color.green(color);
+        final int blue = Color.blue(color);
+        pakoogramCardGradient = new LinearGradient(
+                pakoogramCardRect.left, pakoogramCardRect.centerY(),
+                pakoogramCardRect.right, pakoogramCardRect.centerY(),
+                new int[]{
+                        Color.argb(Math.round(PAKOGRAM_CARD_GRADIENT_START_ALPHA * factor), red, green, blue),
+                        Color.argb(Math.round(PAKOGRAM_CARD_GRADIENT_MIDDLE_ALPHA * factor), red, green, blue),
+                        Color.argb(Math.round(PAKOGRAM_CARD_GRADIENT_END_ALPHA * factor), red, green, blue)
+                },
+                new float[]{0f, 0.5f, 1f},
+                Shader.TileMode.CLAMP);
+        pakoogramCardGradientPaint.setShader(pakoogramCardGradient);
+
+        pakoogramCardStrokePaint.setStyle(Paint.Style.STROKE);
+        pakoogramCardStrokePaint.setStrokeWidth(Math.max(1f, dpf2(PAKOGRAM_CARD_STROKE_WIDTH)));
+        pakoogramCardStrokePaint.setShader(new LinearGradient(
+                pakoogramCardRect.left, pakoogramCardRect.top,
+                pakoogramCardRect.right, pakoogramCardRect.bottom,
+                new int[]{PAKOGRAM_CARD_STROKE_START_COLOR, PAKOGRAM_CARD_STROKE_END_COLOR},
+                new float[]{0f, 1f},
+                Shader.TileMode.CLAMP));
+    }
+
+    /**
+     * Pakoogram: рисует «стеклянную» карточку диалога.
+     *
+     * <p>Порядок слоёв: матовая полупрозрачная подложка → горизонтальный
+     * многоступенчатый градиент цвета аватарки → тонкий световой блик по контуру.
+     * Вызывается из {@link #onDraw(Canvas)} до аватарки и текста, поэтому карточка
+     * всегда остаётся под содержимым ячейки.</p>
+     */
+    private void drawPakoogramCard(Canvas canvas) {
+        if (!PakoogramConfig.isGlassChatCardsEnabled() || translationX != 0) {
             return;
         }
         final int color = getPakoogramTintColor();
         if (color == 0) {
             return;
         }
-        pakoogramTintPaint.setColor(color);
-        pakoogramTintPaint.setAlpha(0x22);
-        canvas.drawRect(0, 0, getMeasuredWidth(), getMeasuredHeight(), pakoogramTintPaint);
+        final float insetHorizontal = dp(PAKOGRAM_CARD_MARGIN_HORIZONTAL);
+        final float insetVertical = dpf2(PAKOGRAM_CARD_MARGIN_VERTICAL);
+        pakoogramCardRect.set(
+                insetHorizontal, insetVertical,
+                getMeasuredWidth() - insetHorizontal, getMeasuredHeight() - insetVertical);
+        if (pakoogramCardRect.width() <= 0 || pakoogramCardRect.height() <= 0) {
+            return;
+        }
+        final float radius = Math.min(dp(PakoogramConfig.getChatCardCornerRadius()),
+                Math.min(pakoogramCardRect.width(), pakoogramCardRect.height()) / 2f);
+        final int intensity = PakoogramConfig.getChatCardGradientIntensity();
+        ensurePakoogramCardShaders(color, intensity, radius);
+
+        // 1. Матовая полупрозрачная подложка карточки.
+        pakoogramCardPaint.setShader(null);
+        pakoogramCardPaint.setStyle(Paint.Style.FILL);
+        pakoogramCardPaint.setColor(Theme.getColor(Theme.key_windowBackgroundWhite, resourcesProvider));
+        pakoogramCardPaint.setAlpha(PAKOGRAM_CARD_BACKGROUND_ALPHA);
+        canvas.drawRoundRect(pakoogramCardRect, radius, radius, pakoogramCardPaint);
+
+        // 2. Горизонтальный многоступенчатый градиент цвета аватарки.
+        if (intensity > 0) {
+            canvas.drawRoundRect(pakoogramCardRect, radius, radius, pakoogramCardGradientPaint);
+        }
+
+        // 3. Тонкий стеклянный блик по контуру карточки.
+        final float strokeWidth = Math.max(1f, dpf2(PAKOGRAM_CARD_STROKE_WIDTH));
+        pakoogramCardStrokeRect.set(pakoogramCardRect);
+        pakoogramCardStrokeRect.inset(strokeWidth / 2f, strokeWidth / 2f);
+        final float strokeRadius = Math.max(0f, radius - strokeWidth / 2f);
+        canvas.drawRoundRect(pakoogramCardStrokeRect, strokeRadius, strokeRadius, pakoogramCardStrokePaint);
     }
 
     @SuppressLint("DrawAllocation")
@@ -3979,8 +4145,8 @@ public class DialogCell extends BaseCell implements StoriesListPlaceProvider.Ava
             canvas.clipRect(0, topClip * clipProgress, getMeasuredWidth(), getMeasuredHeight() - (int) (bottomClip * clipProgress));
         }
 
-        // Pakoogram: лёгкая тонировка карточки под цвет собеседника
-        drawPakoogramTint(canvas);
+        // Pakoogram: «стеклянная» карточка под цвет собеседника
+        drawPakoogramCard(canvas);
 
         int backgroundColor = 0;
         if (translationX != 0 || cornerProgress != 0.0f) {

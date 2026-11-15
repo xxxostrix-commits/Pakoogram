@@ -23,17 +23,30 @@ public class PakoogramConfig {
     public static final String KEY_SPRING_PHYSICS = "springPhysics";
     public static final String KEY_FLOATING_PANELS = "floatingPanels";
     public static final String KEY_GHOST_MODE = "ghostMode";
+    /** Стеклянные карточки чатов в списке диалогов. */
+    public static final String KEY_GLASS_CHAT_CARDS = "glassChatCards";
+    /** Интенсивность градиента на карточках чатов, 0..100%. */
+    public static final String KEY_CHAT_CARD_GRADIENT_INTENSITY = "chatCardGradientIntensity";
+    /** Радиус скругления карточек чатов в dp. */
+    public static final String KEY_CHAT_CARD_CORNER_RADIUS = "chatCardCornerRadius";
 
     public static final int DEFAULT_BLUR_INTENSITY = 85;
     public static final int DEFAULT_CORNER_RADIUS = 20;
     public static final boolean DEFAULT_SPRING_PHYSICS = true;
     public static final boolean DEFAULT_FLOATING_PANELS = true;
     public static final boolean DEFAULT_GHOST_MODE = false;
+    public static final boolean DEFAULT_GLASS_CHAT_CARDS = true;
+    public static final int DEFAULT_CHAT_CARD_GRADIENT_INTENSITY = 100;
+    public static final int DEFAULT_CHAT_CARD_CORNER_RADIUS = 16;
 
     public static final int MIN_BLUR_INTENSITY = 0;
     public static final int MAX_BLUR_INTENSITY = 100;
     public static final int MIN_CORNER_RADIUS = 0;
     public static final int MAX_CORNER_RADIUS = 40;
+    public static final int MIN_CHAT_CARD_GRADIENT_INTENSITY = 0;
+    public static final int MAX_CHAT_CARD_GRADIENT_INTENSITY = 100;
+    public static final int MIN_CHAT_CARD_CORNER_RADIUS = 0;
+    public static final int MAX_CHAT_CARD_CORNER_RADIUS = 24;
 
     private static SharedPreferences preferences;
 
@@ -152,6 +165,49 @@ public class PakoogramConfig {
         return isGhostModeEnabled();
     }
 
+    /* ------------------------------------------------------- glassChatCards */
+
+    /** Стеклянные карточки чатов в списке диалогов, по умолчанию {@value #DEFAULT_GLASS_CHAT_CARDS}. */
+    public static boolean isGlassChatCardsEnabled() {
+        return getPreferences().getBoolean(KEY_GLASS_CHAT_CARDS, DEFAULT_GLASS_CHAT_CARDS);
+    }
+
+    public static void setGlassChatCardsEnabled(boolean enabled) {
+        getPreferences().edit().putBoolean(KEY_GLASS_CHAT_CARDS, enabled).apply();
+    }
+
+    /* ------------------------------------------- chatCardGradientIntensity */
+
+    /** Интенсивность градиента на карточках чатов в процентах, по умолчанию {@value #DEFAULT_CHAT_CARD_GRADIENT_INTENSITY}. */
+    public static int getChatCardGradientIntensity() {
+        return clamp(getPreferences().getInt(KEY_CHAT_CARD_GRADIENT_INTENSITY, DEFAULT_CHAT_CARD_GRADIENT_INTENSITY),
+                MIN_CHAT_CARD_GRADIENT_INTENSITY, MAX_CHAT_CARD_GRADIENT_INTENSITY);
+    }
+
+    /** @param value процент градиента, зажимается в [{@value #MIN_CHAT_CARD_GRADIENT_INTENSITY}; {@value #MAX_CHAT_CARD_GRADIENT_INTENSITY}] */
+    public static void setChatCardGradientIntensity(int value) {
+        getPreferences().edit()
+                .putInt(KEY_CHAT_CARD_GRADIENT_INTENSITY, clamp(value,
+                        MIN_CHAT_CARD_GRADIENT_INTENSITY, MAX_CHAT_CARD_GRADIENT_INTENSITY))
+                .apply();
+    }
+
+    /* ------------------------------------------------ chatCardCornerRadius */
+
+    /** Радиус скругления карточек чатов в dp, по умолчанию {@value #DEFAULT_CHAT_CARD_CORNER_RADIUS}. */
+    public static int getChatCardCornerRadius() {
+        return clamp(getPreferences().getInt(KEY_CHAT_CARD_CORNER_RADIUS, DEFAULT_CHAT_CARD_CORNER_RADIUS),
+                MIN_CHAT_CARD_CORNER_RADIUS, MAX_CHAT_CARD_CORNER_RADIUS);
+    }
+
+    /** @param value радиус в dp, зажимается в [{@value #MIN_CHAT_CARD_CORNER_RADIUS}; {@value #MAX_CHAT_CARD_CORNER_RADIUS}] */
+    public static void setChatCardCornerRadius(int value) {
+        getPreferences().edit()
+                .putInt(KEY_CHAT_CARD_CORNER_RADIUS, clamp(value,
+                        MIN_CHAT_CARD_CORNER_RADIUS, MAX_CHAT_CARD_CORNER_RADIUS))
+                .apply();
+    }
+
     /* -------------------------------------------------------------------- сброс */
 
     /** Сбрасывает все настройки Pakoogram к значениям по умолчанию. */
@@ -162,6 +218,9 @@ public class PakoogramConfig {
                 .putBoolean(KEY_SPRING_PHYSICS, DEFAULT_SPRING_PHYSICS)
                 .putBoolean(KEY_FLOATING_PANELS, DEFAULT_FLOATING_PANELS)
                 .putBoolean(KEY_GHOST_MODE, DEFAULT_GHOST_MODE)
+                .putBoolean(KEY_GLASS_CHAT_CARDS, DEFAULT_GLASS_CHAT_CARDS)
+                .putInt(KEY_CHAT_CARD_GRADIENT_INTENSITY, DEFAULT_CHAT_CARD_GRADIENT_INTENSITY)
+                .putInt(KEY_CHAT_CARD_CORNER_RADIUS, DEFAULT_CHAT_CARD_CORNER_RADIUS)
                 .apply();
     }
 }

@@ -3,6 +3,7 @@ package org.telegram.ui;
 import android.app.AlertDialog;
 import android.content.Context;
 import android.content.DialogInterface;
+import android.content.res.ColorStateList;
 import android.graphics.Canvas;
 import android.graphics.ColorFilter;
 import android.graphics.Paint;
@@ -10,14 +11,21 @@ import android.graphics.Path;
 import android.graphics.PixelFormat;
 import android.graphics.Rect;
 import android.graphics.drawable.Drawable;
+import android.os.Build;
+import android.util.TypedValue;
+import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.FrameLayout;
+import android.widget.LinearLayout;
+import android.widget.SeekBar;
+import android.widget.TextView;
 
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
 import org.telegram.messenger.AndroidUtilities;
+import org.telegram.messenger.NotificationCenter;
 import org.telegram.ui.ActionBar.ActionBar;
 import org.telegram.ui.ActionBar.BaseFragment;
 import org.telegram.ui.ActionBar.Theme;
@@ -44,16 +52,20 @@ public class PakoogramSettingsActivity extends BaseFragment {
     private static final int VIEW_TYPE_HEADER = 0;
     private static final int VIEW_TYPE_CHECK = 1;
     private static final int VIEW_TYPE_SETTINGS = 2;
+    private static final int VIEW_TYPE_SLIDER = 3;
 
     private static final int ROW_HEADER_APPEARANCE = 0;
-    private static final int ROW_BLUR_INTENSITY = 1;
-    private static final int ROW_CORNER_RADIUS = 2;
-    private static final int ROW_HEADER_INTERFACE = 3;
-    private static final int ROW_SPRING_PHYSICS = 4;
-    private static final int ROW_FLOATING_PANELS = 5;
-    private static final int ROW_GHOST_MODE = 6;
-    private static final int ROW_HEADER_ABOUT = 7;
-    private static final int ROW_COUNT = 8;
+    private static final int ROW_GLASS_CHAT_CARDS = 1;
+    private static final int ROW_CHAT_CARD_GRADIENT = 2;
+    private static final int ROW_CHAT_CARD_CORNER_RADIUS = 3;
+    private static final int ROW_BLUR_INTENSITY = 4;
+    private static final int ROW_CORNER_RADIUS = 5;
+    private static final int ROW_HEADER_INTERFACE = 6;
+    private static final int ROW_SPRING_PHYSICS = 7;
+    private static final int ROW_FLOATING_PANELS = 8;
+    private static final int ROW_GHOST_MODE = 9;
+    private static final int ROW_HEADER_ABOUT = 10;
+    private static final int ROW_COUNT = 11;
 
     private static final int[] BLUR_INTENSITY_VALUES =
             {0, 10, 20, 30, 40, 50, 60, 70, 75, 80, 85, 90, 95, 100};
@@ -98,6 +110,15 @@ public class PakoogramSettingsActivity extends BaseFragment {
 
     private void onRowClick(View view, int position) {
         switch (position) {
+            case ROW_GLASS_CHAT_CARDS: {
+                boolean enabled = !PakoogramConfig.isGlassChatCardsEnabled();
+                PakoogramConfig.setGlassChatCardsEnabled(enabled);
+                if (view instanceof TextCheckCell) {
+                    ((TextCheckCell) view).setChecked(enabled);
+                }
+                notifyDialogsListChanged();
+                break;
+            }
             case ROW_BLUR_INTENSITY:
                 showIntValueSelector("Интенсивность размытия", BLUR_INTENSITY_VALUES,
                         PakoogramConfig.getBlurIntensity(), new IntValueListener() {
@@ -147,6 +168,11 @@ public class PakoogramSettingsActivity extends BaseFragment {
 
     private interface IntValueListener {
         void onValueSelected(int value);
+    }
+
+    /** Pakoogram: просит список диалогов перерисоваться после изменения внешнего вида карточек. */
+    private static void notifyDialogsListChanged() {
+        NotificationCenter.getGlobalInstance().postNotificationName(NotificationCenter.dialogsNeedReload);
     }
 
     private void showIntValueSelector(CharSequence title, final int[] values, int currentValue,
@@ -216,7 +242,11 @@ public class PakoogramSettingsActivity extends BaseFragment {
                 case ROW_SPRING_PHYSICS:
                 case ROW_FLOATING_PANELS:
                 case ROW_GHOST_MODE:
+                case ROW_GLASS_CHAT_CARDS:
                     return VIEW_TYPE_CHECK;
+                case ROW_CHAT_CARD_GRADIENT:
+                case ROW_CHAT_CARD_CORNER_RADIUS:
+                    return VIEW_TYPE_SLIDER;
                 default:
                     return VIEW_TYPE_SETTINGS;
             }
@@ -239,6 +269,11 @@ public class PakoogramSettingsActivity extends BaseFragment {
                     view = new TextCheckCell(mContext);
                     break;
                 case VIEW_TYPE_SETTINGS:
+                    view = new TextSettingsCell(mContext);
+                    break;
+                case VIEW_TYPE_SLIDER:
+                    view = new PakoogramSliderCell(mContext);
+                    break;
                 default:
                     view = new TextSettingsCell(mContext);
                     break;
@@ -261,7 +296,10 @@ public class PakoogramSettingsActivity extends BaseFragment {
                 }
                 case VIEW_TYPE_CHECK: {
                     TextCheckCell checkCell = (TextCheckCell) holder.itemView;
-                    if (position == ROW_SPRING_PHYSICS) {
+                    if (position == ROW_GLASS_CHAT_CARDS) {
+                        checkCell.setTextAndCheck("Стеклянные карточки чатов",
+                                PakoogramConfig.isGlassChatCardsEnabled(), false);
+                    } else if (position == ROW_SPRING_PHYSICS) {
                         checkCell.setTextAndCheck("Пружинная анимация",
                                 PakoogramConfig.isSpringPhysicsEnabled(), false);
                     } else if (position == ROW_FLOATING_PANELS) {
@@ -270,6 +308,45 @@ public class PakoogramSettingsActivity extends BaseFragment {
                     } else {
                         checkCell.setTextAndCheck("Режим призрака",
                                 PakoogramConfig.isGhostModeEnabled(), true);
+                    }
+                    break;
+                }
+                case VIEW_TYPE_SLIDER: {
+                    PakoogramSliderCell sliderCell = (PakoogramSliderCell) holder.itemView;
+                    if (position == ROW_CHAT_CARD_GRADIENT) {
+                        sliderCell.setContent("Интенсивность градиента", "%",
+                                PakoogramConfig.MIN_CHAT_CARD_GRADIENT_INTENSITY,
+                                PakoogramConfig.MAX_CHAT_CARD_GRADIENT_INTENSITY,
+                                PakoogramConfig.getChatCardGradientIntensity(),
+                                new IntValueListener() {
+                                    @Override
+                                    public void onValueSelected(int value) {
+                                        PakoogramConfig.setChatCardGradientIntensity(value);
+                                    }
+                                },
+                                new Runnable() {
+                                    @Override
+                                    public void run() {
+                                        notifyDialogsListChanged();
+                                    }
+                                });
+                    } else {
+                        sliderCell.setContent("Скругление карточек", " dp",
+                                PakoogramConfig.MIN_CHAT_CARD_CORNER_RADIUS,
+                                PakoogramConfig.MAX_CHAT_CARD_CORNER_RADIUS,
+                                PakoogramConfig.getChatCardCornerRadius(),
+                                new IntValueListener() {
+                                    @Override
+                                    public void onValueSelected(int value) {
+                                        PakoogramConfig.setChatCardCornerRadius(value);
+                                    }
+                                },
+                                new Runnable() {
+                                    @Override
+                                    public void run() {
+                                        notifyDialogsListChanged();
+                                    }
+                                });
                     }
                     break;
                 }
@@ -288,6 +365,101 @@ public class PakoogramSettingsActivity extends BaseFragment {
                     break;
                 }
             }
+        }
+    }
+
+    /**
+     * Pakoogram: строка настроек с ползунком.
+     *
+     * <p>Показывает название параметра и его текущее значение, а под ними — {@link SeekBar}.
+     * Значение сохраняется в {@link PakoogramConfig} сразу при перетаскивании, поэтому
+     * список диалогов обновляется в реальном времени.</p>
+     */
+    private static class PakoogramSliderCell extends LinearLayout {
+
+        private final TextView titleView;
+        private final TextView valueView;
+        private final SeekBar seekBar;
+        private IntValueListener listener;
+        private Runnable onTrackingStopped;
+        private String valueSuffix = "";
+        private int minValue;
+        private int maxValue = 100;
+        private boolean ignoreProgress;
+
+        PakoogramSliderCell(Context context) {
+            super(context);
+            setOrientation(VERTICAL);
+            setPadding(AndroidUtilities.dp(21), AndroidUtilities.dp(8), AndroidUtilities.dp(21), AndroidUtilities.dp(2));
+
+            LinearLayout header = new LinearLayout(context);
+            header.setOrientation(HORIZONTAL);
+            addView(header, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT));
+
+            titleView = new TextView(context);
+            titleView.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 16);
+            titleView.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteBlackText));
+            header.addView(titleView, LayoutHelper.createLinear(0, LayoutHelper.WRAP_CONTENT, 1f, Gravity.CENTER_VERTICAL));
+
+            valueView = new TextView(context);
+            valueView.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 15);
+            valueView.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteValueText));
+            header.addView(valueView, LayoutHelper.createLinear(LayoutHelper.WRAP_CONTENT, LayoutHelper.WRAP_CONTENT, Gravity.CENTER_VERTICAL));
+
+            seekBar = new SeekBar(context);
+            if (Build.VERSION.SDK_INT >= 21) {
+                final int accentColor = Theme.getColor(Theme.key_switchTrackChecked);
+                seekBar.setProgressTintList(ColorStateList.valueOf(accentColor));
+                seekBar.setProgressBackgroundTintList(ColorStateList.valueOf(Theme.getColor(Theme.key_switchTrack)));
+                seekBar.setThumbTintList(ColorStateList.valueOf(accentColor));
+            }
+            addView(seekBar, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT));
+            seekBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+                @Override
+                public void onProgressChanged(SeekBar bar, int progress, boolean fromUser) {
+                    final int value = getValue(progress);
+                    valueView.setText(value + valueSuffix);
+                    if (fromUser && !ignoreProgress && listener != null) {
+                        listener.onValueSelected(value);
+                    }
+                }
+
+                @Override
+                public void onStartTrackingTouch(SeekBar bar) {
+                }
+
+                @Override
+                public void onStopTrackingTouch(SeekBar bar) {
+                    if (onTrackingStopped != null) {
+                        onTrackingStopped.run();
+                    }
+                }
+            });
+        }
+
+        void setContent(String title, String suffix, int min, int max, int value,
+                        IntValueListener listener, Runnable onTrackingStopped) {
+            this.listener = listener;
+            this.onTrackingStopped = onTrackingStopped;
+            this.valueSuffix = suffix == null ? "" : suffix;
+            this.minValue = min;
+            this.maxValue = Math.max(min + 1, max);
+
+            ignoreProgress = true;
+            seekBar.setMax(this.maxValue - this.minValue);
+            seekBar.setProgress(clampValue(value) - this.minValue);
+            ignoreProgress = false;
+
+            titleView.setText(title);
+            valueView.setText(clampValue(value) + this.valueSuffix);
+        }
+
+        private int clampValue(int value) {
+            return Math.max(minValue, Math.min(maxValue, value));
+        }
+
+        private int getValue(int progress) {
+            return clampValue(minValue + progress);
         }
     }
 
