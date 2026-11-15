@@ -37,7 +37,7 @@ import kotlin.math.min
  * - POST {base}/upload, multipart: field "text" (final text),
  *   one "files[]" field per media file (filename + content type)
  * - auth header X-Upload-Token on every request (never logged, never shown)
- * - User-Agent: Forkgram/1.0 on every request
+ * - User-Agent: Pakoogram/1.0 on every request
  * - response JSON {"id": "<id>", "url": "<page url>"}
  * - DELETE <url> with X-Upload-Token removes the page
  */
@@ -130,7 +130,7 @@ object WebPublishConfig {
 
 object WebPublishClient {
 
-    const val USER_AGENT = "Forkgram/1.0"
+    const val USER_AGENT = "Pakoogram/1.0"
 
     const val IMAGE_MAX_BYTES = 5L * 1024 * 1024
     const val VIDEO_MAX_BYTES = 20L * 1024 * 1024
@@ -194,7 +194,7 @@ object WebPublishClient {
      */
     @JvmStatic
     fun uploadReport(uploadUrl: String, token: String, text: String, files: List<UploadFile>): Result {
-        val boundary = "----Forkgram${UUID.randomUUID()}"
+        val boundary = "----Pakoogram${UUID.randomUUID()}"
         var conn: HttpURLConnection? = null
         try {
             conn = URL(uploadUrl).openConnection() as HttpURLConnection

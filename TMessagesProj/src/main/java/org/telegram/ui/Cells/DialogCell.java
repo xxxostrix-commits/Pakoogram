@@ -17,6 +17,7 @@ import android.animation.AnimatorListenerAdapter;
 import android.animation.ValueAnimator;
 import android.annotation.SuppressLint;
 import android.content.Context;
+import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.ColorFilter;
@@ -545,6 +546,11 @@ public class DialogCell extends BaseCell implements StoriesListPlaceProvider.Ava
     public ImageReceiver avatarImage = new ImageReceiver(this);
     private PhotoBubbleClip bubbleClip;
     private AvatarDrawable avatarDrawable = new AvatarDrawable();
+    // Pakoogram: поля для тонировки карточки диалога цветом собеседника
+    private final Paint pakoogramTintPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private int pakoogramTintColor;
+    private long pakoogramTintDialogId = Long.MIN_VALUE;
+    private Bitmap pakoogramTintBitmap;
     private boolean animatingArchiveAvatar;
     private float animatingArchiveAvatarProgress;
     private BounceInterpolator interpolator = new BounceInterpolator();
@@ -3886,6 +3892,51 @@ public class DialogCell extends BaseCell implements StoriesListPlaceProvider.Ava
     private GradientDrawable archiveFadeGradientDrawable;
     private int archiveFadeGradientDrawableColor;
 
+    /**
+     * Pakoogram: возвращает цвет, которым тонируется карточка диалога.
+     *
+     * <p>Приоритет: доминирующий цвет аватарки (если у чата есть фото) → цвет
+     * автоматически сгенерированной аватарки (он выводится из имени) → цвет имени
+     * из текущей темы. Значение кешируется на диалог, чтобы не пересчитывать
+     * пиксели аватарки на каждом кадре.</p>
+     */
+    private int getPakoogramTintColor() {
+        Bitmap bitmap = avatarImage.getBitmap();
+        if (pakoogramTintBitmap != bitmap || pakoogramTintDialogId != currentDialogId) {
+            pakoogramTintBitmap = bitmap;
+            pakoogramTintDialogId = currentDialogId;
+            int color = 0;
+            if (bitmap != null && !bitmap.isRecycled()) {
+                color = AndroidUtilities.getDominantColor(bitmap);
+            }
+            if (color == 0 && avatarImage.getDrawable() instanceof VectorAvatarThumbDrawable) {
+                color = ((VectorAvatarThumbDrawable) avatarImage.getDrawable()).gradientTools.getAverageColor();
+            }
+            if (color == 0 && avatarDrawable != null) {
+                color = avatarDrawable.getColor2();
+            }
+            if (color == 0) {
+                color = Theme.getColor(Theme.key_chats_name, resourcesProvider);
+            }
+            pakoogramTintColor = color;
+        }
+        return pakoogramTintColor;
+    }
+
+    /** Pakoogram: заливает фон ячейки цветом собеседника с прозрачностью около 13%. */
+    private void drawPakoogramTint(Canvas canvas) {
+        if (translationX != 0 || drawArchive) {
+            return;
+        }
+        final int color = getPakoogramTintColor();
+        if (color == 0) {
+            return;
+        }
+        pakoogramTintPaint.setColor(color);
+        pakoogramTintPaint.setAlpha(0x22);
+        canvas.drawRect(0, 0, getMeasuredWidth(), getMeasuredHeight(), pakoogramTintPaint);
+    }
+
     @SuppressLint("DrawAllocation")
     @Override
     protected void onDraw(Canvas canvas) {
@@ -3927,6 +3978,9 @@ public class DialogCell extends BaseCell implements StoriesListPlaceProvider.Ava
             canvas.save();
             canvas.clipRect(0, topClip * clipProgress, getMeasuredWidth(), getMeasuredHeight() - (int) (bottomClip * clipProgress));
         }
+
+        // Pakoogram: лёгкая тонировка карточки под цвет собеседника
+        drawPakoogramTint(canvas);
 
         int backgroundColor = 0;
         if (translationX != 0 || cornerProgress != 0.0f) {

@@ -24,7 +24,7 @@ import java.net.URL
 
 object AppUpdater {
 
-    private const val TITLE = "The latest Forkgram version"
+    private const val TITLE = "The latest Pakoogram version"
     private const val DESC = ""
     private const val PREFS_NAME = "AppUpdaterPrefs"
     private const val KEY_LAST_APK_PATH = "lastApkPath"

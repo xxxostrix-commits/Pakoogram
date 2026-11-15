@@ -223,7 +223,7 @@ public class VoiceTimecodesSettingsActivity extends BaseFragment {
         if (getParentActivity() != null) {
             ClipboardManager clipboard = (ClipboardManager) getParentActivity().getSystemService(Context.CLIPBOARD_SERVICE);
             if (clipboard != null) {
-                clipboard.setPrimaryClip(ClipData.newPlainText("Forkgram voice timecodes", code));
+                clipboard.setPrimaryClip(ClipData.newPlainText("Pakoogram voice timecodes", code));
             }
             Toast.makeText(getParentActivity(), LocaleController.getString(R.string.VoiceTimecodesCodeCopied), Toast.LENGTH_SHORT).show();
         }

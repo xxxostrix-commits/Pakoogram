@@ -7084,7 +7084,7 @@ public class AndroidUtilities {
     }
 
     public static void dumpCanvas(View v) {
-        // Disabled in forkgram: too expensive (full software re-render + deep-copy of every
+        // Disabled in Pakoogram: too expensive (full software re-render + deep-copy of every
         // Paint/Matrix/Path/Bitmap per draw command) and not useful for our debug builds.
     }
 

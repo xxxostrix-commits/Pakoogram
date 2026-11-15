@@ -1,1 +1,1 @@
-Forkgram — это форк официального приложения Telegram для Android.
+Pakoogram — это форк официального приложения Telegram для Android.

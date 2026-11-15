@@ -8,7 +8,9 @@ import org.telegram.messenger.BuildVars
 
 object SettingsBackup {
 
-    private const val MARKER = "forkgram_settings_export"
+    private const val MARKER = "pakoogram_settings_export"
+    // Pakoogram: файлы, экспортированные прежней сборкой, тоже принимаем.
+    private const val LEGACY_MARKER = "forkgram_settings_export"
 
     private val ALLOWED_PREFS = listOf(
         "mainconfig",
@@ -81,7 +83,7 @@ object SettingsBackup {
     @Throws(Exception::class)
     fun restore(context: Context, json: String): Boolean {
         val root = JSONObject(json)
-        if (!root.has(MARKER)) {
+        if (!root.has(MARKER) && !root.has(LEGACY_MARKER)) {
             return false
         }
         val prefsObject = root.optJSONObject("prefs") ?: return false

@@ -207,7 +207,7 @@ object VoiceTimecodes {
     }
 
     private fun transcribeAudio(audioFile: File, sttUrl: String, token: String): List<Segment> {
-        val boundary = "----ForkgramVtc" + UUID.randomUUID().toString().replace("-", "")
+        val boundary = "----PakoogramVtc" + UUID.randomUUID().toString().replace("-", "")
         var conn: HttpURLConnection? = null
         try {
             conn = URL(sttUrl).openConnection() as HttpURLConnection

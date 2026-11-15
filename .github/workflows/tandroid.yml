@@ -1,4 +1,4 @@
-name: Fork Client
+name: Pakoogram
 
 on:
   push:
@@ -25,6 +25,7 @@ jobs:
         with:
           distribution: 'temurin'
           java-version: '17'
+          cache: 'gradle'
       - uses: nttld/setup-ndk@v1.4.2
         id: setup-ndk-r27c
         with:
@@ -78,13 +79,13 @@ jobs:
           fi
 
           echo "Detected version: $version"
-          cp "$apk" "artifact/ForkClient-${version}-debug.apk"
+          cp "$apk" "artifact/Pakoogram-${version}-debug.apk"
           ls -la artifact
 
       - name: Upload debug APK
         uses: actions/upload-artifact@v4
         with:
-          name: ForkClient-debug-apk
+          name: Pakoogram-debug-apk
           path: artifact/*.apk
           if-no-files-found: error
 

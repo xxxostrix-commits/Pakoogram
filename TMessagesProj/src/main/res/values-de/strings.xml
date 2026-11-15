@@ -1,16 +1,16 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!--FORK CLIENT-->
+    <!--PAKOGRAM-->
     <string name="ForkSettingsLock">Einstellungssperre</string>
     <string name="ForkSettingsLockChangeCode">Code ändern</string>
     <string name="ForkSettingsLockCodesDoNotMatch">Die Codes stimmen nicht überein. Gib einen neuen Code ein.</string>
     <string name="ForkSettingsLockConfirmCodeInfo">Gib den Code zur Bestätigung erneut ein.</string>
     <string name="ForkSettingsLockConfirmCurrentCodeInfo">Gib den aktuellen Code ein, um ihn zu ändern oder zu entfernen.</string>
-    <string name="ForkSettingsLockInfo">Verwende einen separaten 4-stelligen Code, um die Einstellungen des Fork-Clients zu öffnen. Der Code schützt nur diesen Einstellungsbildschirm: Das Löschen der App-Daten oder das Installieren einer anderen Version entfernt ihn.</string>
+    <string name="ForkSettingsLockInfo">Verwende einen separaten 4-stelligen Code, um die Einstellungen von Pakoogram zu öffnen. Der Code schützt nur diesen Einstellungsbildschirm: Das Löschen der App-Daten oder das Installieren einer anderen Version entfernt ihn.</string>
     <string name="ForkSettingsLockRemoveCode">Code entfernen</string>
-    <string name="ForkSettingsLockRemoveCodeConfirm">Die Einstellungen des Fork-Clients lassen sich dann ohne Code öffnen.</string>
+    <string name="ForkSettingsLockRemoveCodeConfirm">Die Einstellungen von Pakoogram lassen sich dann ohne Code öffnen.</string>
     <string name="ForkSettingsLockSetCode">Code einrichten</string>
-    <string name="ForkSettingsLockUnlockInfo">Gib den Code ein, um die Einstellungen des Fork-Clients zu öffnen.</string>
+    <string name="ForkSettingsLockUnlockInfo">Gib den Code ein, um die Einstellungen von Pakoogram zu öffnen.</string>
     <string name="DeleteFromDevice">Vom Gerät löschen</string>
     <string name="DeleteFromDeviceDone">Datei vom Gerät gelöscht</string>
     <string name="DeleteFromDeviceMessage">Diese Datei wird endgültig von deinem Gerät gelöscht.</string>
@@ -69,7 +69,7 @@
     <string name="QRLoginStep3">Richte dein Handy auf diesen Bildschirm, um die Anmeldung zu bestätigen</string>
     <string name="QRLoginSubtitle">Öffne Telegram auf einem anderen Gerät und scanne diesen QR-Code, um dich bei deinem Konto anzumelden.</string>
     <string name="QRLoginTitle">Per QR-Code anmelden</string>
-    <string name="AppNameFdroid">Forkgram</string>
+    <string name="AppNameFdroid">Pakoogram</string>
     <string name="GoToTags">GoTo-Chats: %1$s</string>
     <string name="GoToNotFound">Kein GoTo-Chat für #%1$s (%2$s) gefunden</string>
     <string name="GoToAmbiguous">Tag #%1$s passt zu mehreren Chats: %2$s</string>
@@ -172,7 +172,7 @@
     <string name="formatterDay12HSec">h:mm:ss a</string>
     <string name="CopyWithoutProtocol">Ohne Protokoll kopieren</string>
     <!--fork settings view-->
-    <string name="ForkSettingsTitle">Einstellungen des Fork-Clients</string>
+    <string name="ForkSettingsTitle">Einstellungen von Pakoogram</string>
     <string name="ForkCheckUpdate">Updates überprüfen</string>
     <string name="SquareAvatars">Quadratische Avatare</string>
     <string name="AvatarShape">Avatar-Form</string>
@@ -272,8 +272,8 @@
     <string name="LinkReplacementInvalid">Ungültiger Ausdruck</string>
     <string name="LinkReplacedOnPaste">Link ersetzt</string>
 
-    <string name="AppName">Fork Client</string>
-    <string name="AppNameBeta">Fork Client</string>
+    <string name="AppName">Pakoogram</string>
+    <string name="AppNameBeta">Pakoogram</string>
     <string name="LanguageName">Deutsch</string>
     <string name="English">Englisch</string>
     <string name="LanguageNameInEnglish">German</string>

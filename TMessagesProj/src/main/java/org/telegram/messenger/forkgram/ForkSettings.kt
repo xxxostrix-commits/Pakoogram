@@ -147,8 +147,8 @@ object ForkSettings {
         BoolOption("hideInAppHints", ForkSettingsActivity.ID_HIDE_IN_APP_HINTS, false),
         BoolOption("hideBottomButton", ForkSettingsActivity.ID_HIDE_BOTTOM_BUTTON, false),
         StringOption(
-            "forkCustomTitle", ForkSettingsActivity.ID_CUSTOM_TITLE, "Fork Client",
-            writeFn = { raw -> raw.trim().ifEmpty { "Fork Client" } }),
+            "forkCustomTitle", ForkSettingsActivity.ID_CUSTOM_TITLE, "Pakoogram",
+            writeFn = { raw -> raw.trim().ifEmpty { "Pakoogram" } }),
         IntOption("avatarCorners", ForkSettingsActivity.ID_AVATAR_CORNERS, 0, readFn = AndroidUtilities::avatarCornersType),
 
         BoolOption("syncPins", ForkSettingsActivity.ID_SYNC_PINS, true),

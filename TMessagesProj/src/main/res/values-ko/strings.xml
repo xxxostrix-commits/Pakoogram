@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!--FORK CLIENT-->
+    <!--PAKOGRAM-->
     <string name="ForkSettingsLock">설정 잠금</string>
     <string name="ForkSettingsLockChangeCode">코드 변경</string>
     <string name="ForkSettingsLockCodesDoNotMatch">코드가 일치하지 않습니다. 새 코드를 입력하세요.</string>
@@ -69,7 +69,7 @@
     <string name="QRLoginStep3">휴대전화를 이 화면에 비추어 로그인을 확인하세요</string>
     <string name="QRLoginSubtitle">다른 기기에서 텔레그램을 열고 이 QR 코드를 스캔하여 계정에 로그인하세요.</string>
     <string name="QRLoginTitle">QR 코드로 로그인</string>
-    <string name="AppNameFdroid">Forkgram</string>
+    <string name="AppNameFdroid">Pakoogram</string>
     <string name="GoToTags">GoTo 채팅: %1$s</string>
     <string name="GoToNotFound">#%1$s (%2$s)에 대한 GoTo 채팅을 찾을 수 없습니다</string>
     <string name="GoToAmbiguous">태그 #%1$s이(가) 여러 채팅과 일치합니다: %2$s</string>
@@ -272,8 +272,8 @@
     <string name="LinkReplacementInvalid">잘못된 표현식</string>
     <string name="LinkReplacedOnPaste">링크가 바뀌었습니다</string>
 
-    <string name="AppName">Fork Client</string>
-    <string name="AppNameBeta">Fork Client</string>
+    <string name="AppName">Pakoogram</string>
+    <string name="AppNameBeta">Pakoogram</string>
     <string name="LanguageName">한국어</string>
     <string name="English">영어</string>
     <string name="LanguageNameInEnglish">한국어</string>

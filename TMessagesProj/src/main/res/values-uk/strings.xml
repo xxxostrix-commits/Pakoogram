@@ -1,16 +1,16 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!--FORK CLIENT-->
+    <!--PAKOGRAM-->
     <string name="ForkSettingsLock">Блокування налаштувань</string>
     <string name="ForkSettingsLockChangeCode">Змінити код</string>
     <string name="ForkSettingsLockCodesDoNotMatch">Коди не збігаються. Введіть новий код.</string>
     <string name="ForkSettingsLockConfirmCodeInfo">Введіть код ще раз для підтвердження.</string>
     <string name="ForkSettingsLockConfirmCurrentCodeInfo">Введіть поточний код, щоб змінити або видалити його.</string>
-    <string name="ForkSettingsLockInfo">Окремий 4-значний код для входу в налаштування клієнта Fork. Код захищає лише цей екран налаштувань: очищення даних застосунку або встановлення іншої збірки прибирає його.</string>
+    <string name="ForkSettingsLockInfo">Окремий 4-значний код для входу в налаштування Pakoogram. Код захищає лише цей екран налаштувань: очищення даних застосунку або встановлення іншої збірки прибирає його.</string>
     <string name="ForkSettingsLockRemoveCode">Видалити код</string>
-    <string name="ForkSettingsLockRemoveCodeConfirm">Налаштування клієнта Fork відкриватимуться без коду.</string>
+    <string name="ForkSettingsLockRemoveCodeConfirm">Налаштування Pakoogram відкриватимуться без коду.</string>
     <string name="ForkSettingsLockSetCode">Встановити код</string>
-    <string name="ForkSettingsLockUnlockInfo">Введіть код, щоб відкрити налаштування клієнта Fork.</string>
+    <string name="ForkSettingsLockUnlockInfo">Введіть код, щоб відкрити налаштування Pakoogram.</string>
     <string name="DeleteFromDevice">Видалити з пристрою</string>
     <string name="DeleteFromDeviceDone">Файл видалено з пристрою</string>
     <string name="DeleteFromDeviceMessage">Цей файл буде назавжди видалено з вашого пристрою.</string>
@@ -69,7 +69,7 @@
     <string name="QRLoginStep3">Наведіть телефон на цей екран, щоб підтвердити вхід</string>
     <string name="QRLoginSubtitle">Відкрийте Telegram на іншому пристрої та відскануйте цей QR-код, щоб увійти в акаунт.</string>
     <string name="QRLoginTitle">Вхід за QR-кодом</string>
-    <string name="AppNameFdroid">Forkgram</string>
+    <string name="AppNameFdroid">Pakoogram</string>
     <string name="GoToTags">Чати GoTo: %1$s</string>
     <string name="GoToNotFound">Чат GoTo не знайдено для #%1$s (%2$s)</string>
     <string name="GoToAmbiguous">Тег #%1$s відповідає кільком чатам: %2$s</string>
@@ -172,7 +172,7 @@
     <string name="formatterDay12HSec">h:mm:ss a</string>
     <string name="CopyWithoutProtocol">Копіювати без протоколу</string>
     <!--fork settings view-->
-    <string name="ForkSettingsTitle">Налаштування клієнта Fork</string>
+    <string name="ForkSettingsTitle">Налаштування Pakoogram</string>
     <string name="ForkCheckUpdate">Перевірити оновлення</string>
     <string name="SquareAvatars">Квадратні аватари</string>
     <string name="AvatarShape">Форма аватара</string>
@@ -272,8 +272,8 @@
     <string name="LinkReplacementInvalid">Неправильний вираз</string>
     <string name="LinkReplacedOnPaste">Посилання замінено</string>
 
-    <string name="AppName">Fork Client</string>
-    <string name="AppNameBeta">Fork Client</string>
+    <string name="AppName">Pakoogram</string>
+    <string name="AppNameBeta">Pakoogram</string>
     <string name="LanguageName">Українська</string>
     <string name="English">Англійська</string>
     <string name="LanguageNameInEnglish">Ukrainian</string>

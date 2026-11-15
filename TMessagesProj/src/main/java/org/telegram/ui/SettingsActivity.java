@@ -818,7 +818,8 @@ public class SettingsActivity extends BaseFragment implements NotificationCenter
 
         {
             items.add(UItem.asShadow(null));
-            items.add(UItem.asHeader("Fork"));
+            items.add(UItem.asHeader("Pakoogram"));
+            items.add(SettingCell.Factory.of(100, IconBackgroundColors.PURPLE.top, IconBackgroundColors.PURPLE.bottom, R.drawable.settings_fork, getString(R.string.PakoogramSettings)));
             items.add(SettingCell.Factory.of(98, IconBackgroundColors.PURPLE.top, IconBackgroundColors.PURPLE.bottom, R.drawable.settings_fork, getString(R.string.ForkSettingsTitle)));
             items.add(SettingCell.Factory.of(99, IconBackgroundColors.BLUE_DEEP.top, IconBackgroundColors.BLUE_DEEP.bottom, R.drawable.settings_check_update, getString(R.string.ForkCheckUpdate)));
         }
@@ -982,6 +983,9 @@ public class SettingsActivity extends BaseFragment implements NotificationCenter
                 UserSelectorBottomSheet.open(0, BirthdayController.getInstance(UserConfig.selectedAccount).getState());
                 break;
 
+            case 100:
+                presentFragment(new PakoogramSettingsActivity());
+                break;
             case 98:
                 presentFragment(new ForkSettingsActivity());
                 break;
