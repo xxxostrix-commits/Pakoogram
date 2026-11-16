@@ -10356,7 +10356,7 @@ public class ProfileActivity extends BaseFragment implements NotificationCenter.
         int actionBarColor = actionBarAnimationColorFrom != 0 ? actionBarAnimationColorFrom : getThemedColor(Theme.key_actionBarDefault);
         int actionBarColor2 = actionBarColor;
         actionBarColor = ColorUtils.setAlphaComponent(actionBarColor, 0);
-        if (pakoogramPalette != null && !hasColorById) {
+        if (pakoogramPalette != null && !topView.hasColorById) {
             // Pakoogram: при прокрутке шапка не перекрашивается в цвет аватарки —
             // остаётся единый фон экрана, поэтому нет горизонтального шва.
             final int pakoogramBackground = pakoogramPalette.getProfileBackgroundColor(Theme.isCurrentThemeDark());
