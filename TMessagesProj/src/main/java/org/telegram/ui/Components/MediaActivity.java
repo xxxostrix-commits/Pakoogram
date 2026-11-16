@@ -42,6 +42,9 @@ import org.telegram.ui.Components.blur3.drawable.color.impl.BlurredBackgroundPro
 import org.telegram.ui.Components.glass.GlassTabView;
 import org.telegram.ui.DialogsActivity;
 import org.telegram.ui.MainTabsLayout;
+import org.telegram.ui.PakoogramAvatarPalette;
+import org.telegram.ui.PakoogramConfig;
+import org.telegram.ui.PakoogramResourcesProvider;
 import org.telegram.ui.Stories.recorder.ButtonWithCounterView;
 import org.telegram.utils.glass.BaseFragmentSimpleGlass;
 
@@ -66,6 +69,9 @@ public class MediaActivity extends BaseFragment implements SharedMediaLayout.Sha
     private TLRPC.UserFull currentUserInfo;
     private long dialogId;
     private long topicId;
+    // Pakoogram: палитра диалога и провайдер цветов для вкладок/карточек медиа.
+    private PakoogramAvatarPalette.PaletteData pakoogramPalette;
+    private PakoogramResourcesProvider pakoogramResourcesProvider;
     private String hashtag;
     private String username;
     private int storiesCount;
@@ -101,6 +107,9 @@ public class MediaActivity extends BaseFragment implements SharedMediaLayout.Sha
         type = getArguments().getInt("type", TYPE_MEDIA);
         dialogId = getArguments().getLong("dialog_id");
         topicId = getArguments().getLong("topic_id", 0);
+        if (PakoogramConfig.isAdaptiveChatThemeEnabled() && dialogId != 0) {
+            pakoogramPalette = PakoogramAvatarPalette.getOrCreateForDialog(currentAccount, dialogId);
+        }
         hashtag = getArguments().getString("hashtag", "");
         username = getArguments().getString("username", "");
         storiesCount = getArguments().getInt("storiesCount", -1);
@@ -155,6 +164,21 @@ public class MediaActivity extends BaseFragment implements SharedMediaLayout.Sha
     }
 
     @Override
+    public Theme.ResourcesProvider getResourceProvider() {
+        if (!PakoogramConfig.isAdaptiveChatThemeEnabled() || dialogId == 0) {
+            return super.getResourceProvider();
+        }
+        if (pakoogramResourcesProvider == null) {
+            pakoogramResourcesProvider = new PakoogramResourcesProvider(super.getResourceProvider(), dialogId);
+            if (pakoogramPalette == null) {
+                pakoogramPalette = PakoogramAvatarPalette.getOrCreateForDialog(currentAccount, dialogId);
+            }
+            pakoogramResourcesProvider.setPalette(pakoogramPalette);
+        }
+        return pakoogramResourcesProvider;
+    }
+
+    @Override
     protected boolean useSimpleActionBar() {
         return true;
     }
@@ -194,6 +218,7 @@ public class MediaActivity extends BaseFragment implements SharedMediaLayout.Sha
             }
         };
         fragmentView = frameLayout;
+        frameLayout.setBackgroundColor(Theme.getColor(Theme.key_windowBackgroundGray, getResourceProvider()));
 
         if (type == TYPE_MEDIA && dialogId == getUserConfig().getClientUserId() && topicId == 0 && !getMessagesController().getSavedMessagesController().unsupported && getMessagesController().getSavedMessagesController().hasDialogs()) {
             initialTab = SharedMediaLayout.TAB_SAVED_DIALOGS;

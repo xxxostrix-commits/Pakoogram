@@ -541,6 +541,8 @@ public class ChatActivity extends BaseFragment implements
     public ChatActivityFragmentView contentView;
     // Pakoogram: единая палитра аватарки для адаптивной темы переписки.
     private PakoogramAvatarPalette.PaletteData pakoogramPalette;
+    // Pakoogram: провайдер цветов текущего диалога для пузырей, шапки и панелей.
+    private PakoogramResourcesProvider pakoogramResourcesProvider;
     // Pakoogram: градиент фона переписки, построенный по палитре аватарки.
     private Drawable pakoogramChatBackground;
     // Pakoogram: стекло верхних плавающих капсул (имя, звонок, меню) и панели закреплённого сообщения.
@@ -3351,6 +3353,9 @@ public class ChatActivity extends BaseFragment implements
 
         agentBotChat = dialog_id > 0 && getMessagesController().config.agentBotIds.contains(dialog_id);
         themeDelegate = parentThemeDelegate != null ? parentThemeDelegate : new ThemeDelegate();
+        if (PakoogramConfig.isAdaptiveChatThemeEnabled() && dialog_id != 0) {
+            pakoogramResourcesProvider = new PakoogramResourcesProvider(themeDelegate, dialog_id);
+        }
         if (themeDelegate.isThemeChangeAvailable(false)) {
             observersGroup.addGlobal(NotificationCenter.needSetDayNightTheme);
         }
@@ -25882,6 +25887,15 @@ public class ChatActivity extends BaseFragment implements
                 chatListView.invalidateViews();
             }
         } else if (id == NotificationCenter.didApplyNewTheme) {
+            if (PakoogramConfig.isAdaptiveChatThemeEnabled() && dialog_id != 0) {
+                // Тема переключилась: палитры строятся отдельно для светлой и тёмной,
+                // поэтому принудительно очищаем кэш и перекрашиваем открытую переписку.
+                PakoogramAvatarPalette.clear();
+                applyPakoogramAdaptiveTheme();
+                if (chatListView != null) {
+                    chatListView.invalidateViews();
+                }
+            }
             if (undoView == null || paused) {
                 return;
             }
@@ -45075,7 +45089,7 @@ public class ChatActivity extends BaseFragment implements
     }
 
     public Theme.ResourcesProvider getResourceProvider() {
-        return themeDelegate;
+        return pakoogramResourcesProvider != null ? pakoogramResourcesProvider : themeDelegate;
     }
 
     public Runnable onThemeChange;
@@ -45164,6 +45178,13 @@ public class ChatActivity extends BaseFragment implements
 
         @Override
         public int getColor(int key) {
+            final PakoogramResourcesProvider pakoogram = pakoogramResourcesProvider;
+            if (pakoogram != null) {
+                final int override = pakoogram.getOverrideColor(key);
+                if (override != 0) {
+                    return override;
+                }
+            }
             if (animatingColors != null) {
                 int index = animatingColors.indexOfKey(key);
                 if (index >= 0) {
@@ -45200,6 +45221,13 @@ public class ChatActivity extends BaseFragment implements
         }
 
         public int getCurrentColor(int key, boolean ignoreAnimation) {
+            final PakoogramResourcesProvider pakoogram = pakoogramResourcesProvider;
+            if (pakoogram != null) {
+                final int override = pakoogram.getOverrideColor(key);
+                if (override != 0) {
+                    return override;
+                }
+            }
             if (chatTheme == null && backgroundDrawable == null) {
                 return Theme.getColor(key);
             }
@@ -46100,7 +46128,15 @@ public class ChatActivity extends BaseFragment implements
         if (palette == null || palette.getDominantColor() == 0) {
             return;
         }
+        final PakoogramAvatarPalette.PaletteData previousPalette = pakoogramPalette;
         pakoogramPalette = palette;
+        if (pakoogramResourcesProvider == null) {
+            pakoogramResourcesProvider = new PakoogramResourcesProvider(themeDelegate, getDialogId());
+        }
+        pakoogramResourcesProvider.setPalette(palette);
+        if (previousPalette != palette && chatListView != null) {
+            chatListView.invalidateViews();
+        }
 
         final boolean dark = Theme.isCurrentThemeDark();
         final int glass = palette.getGlassPanelColor(dark);

@@ -43,7 +43,9 @@ import android.graphics.PointF;
 import android.graphics.PorterDuff;
 import android.graphics.PorterDuffColorFilter;
 import android.graphics.Rect;
+import android.graphics.LinearGradient;
 import android.graphics.RectF;
+import android.graphics.Shader;
 import android.graphics.drawable.AnimatedVectorDrawable;
 import android.graphics.drawable.BitmapDrawable;
 import android.graphics.drawable.ColorDrawable;
@@ -574,6 +576,13 @@ public class DialogsActivity extends BaseFragment implements NotificationCenter.
     private BackDrawable backDrawable;
 
     private final Paint actionBarDefaultPaint = new Paint();
+    // Pakoogram: матовое стекло шапки с плавным градиентным затуханием книзу.
+    private final Paint pakoogramActionBarFadePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private LinearGradient pakoogramActionBarFadeGradient;
+    private int pakoogramActionBarFadeColor;
+    private int pakoogramActionBarFadeTop;
+    private int pakoogramActionBarFadeBottom;
+    private boolean pakoogramActionBarFadeDark;
 
     private @Nullable ImageView actionModeCloseView;
     private NumberTextView selectedDialogsCountTextView;
@@ -947,7 +956,11 @@ public class DialogsActivity extends BaseFragment implements NotificationCenter.
         @Override
         public void drawBlurRect(Canvas canvas, float y, Rect rectTmp, Paint blurScrimPaint, boolean top) {
             if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q || !SharedConfig.chatBlurEnabled() || iBlur3SourceGlassFrosted == null || !BlurredBackgroundProviderImpl.checkBlurEnabled(currentAccount, resourceProvider)) {
-                canvas.drawRect(rectTmp, blurScrimPaint);
+                if (top) {
+                    drawPakoogramActionBarFade(canvas, rectTmp, blurScrimPaint);
+                } else {
+                    canvas.drawRect(rectTmp, blurScrimPaint);
+                }
                 return;
             }
 
@@ -960,7 +973,11 @@ public class DialogsActivity extends BaseFragment implements NotificationCenter.
 
             final int oldScrimAlpha = blurScrimPaint.getAlpha();
             blurScrimPaint.setAlpha(blurAlpha);
-            canvas.drawRect(rectTmp, blurScrimPaint);
+            if (top) {
+                drawPakoogramActionBarFade(canvas, rectTmp, blurScrimPaint);
+            } else {
+                canvas.drawRect(rectTmp, blurScrimPaint);
+            }
             blurScrimPaint.setAlpha(oldScrimAlpha);
         }
 
@@ -4173,6 +4190,8 @@ public class DialogsActivity extends BaseFragment implements NotificationCenter.
             viewPage.listView.setAllowStopHeaveOperations(true);
             viewPage.listView.setAccessibilityEnabled(false);
             viewPage.listView.setAnimateEmptyView(true, RecyclerListView.EMPTY_VIEW_ANIMATION_TYPE_ALPHA);
+            // Pakoogram: карточки чатов прокручиваются под матовую шапку без жёсткого
+            // среза; верхний отступ под высоту actionBar задаётся в DialogsRecyclerView.
             viewPage.listView.setClipToPadding(false);
             viewPage.listView.setPivotY(0);
             if (initialDialogsType == DIALOGS_TYPE_BOT_REQUEST_PEER) {
@@ -14355,6 +14374,41 @@ public class DialogsActivity extends BaseFragment implements NotificationCenter.
                 }
             }
         }
+    }
+
+    /**
+     * Pakoogram: вместо плотной плашки рисует матовое стекло, которое плавно
+     * растворяется книзу. Благодаря этому карточки чатов уходят под шапку без
+     * жёсткого горизонтального среза.
+     */
+    private void drawPakoogramActionBarFade(Canvas canvas, Rect rect, Paint basePaint) {
+        if (rect == null || rect.width() <= 0 || rect.height() <= 0) {
+            return;
+        }
+        final int baseColor = basePaint.getColor();
+        final int top = rect.top;
+        final int bottom = rect.bottom + AndroidUtilities.dp(20);
+        final boolean dark = Theme.isCurrentThemeDark();
+        if (pakoogramActionBarFadeGradient == null
+                || pakoogramActionBarFadeColor != baseColor
+                || pakoogramActionBarFadeTop != top
+                || pakoogramActionBarFadeBottom != bottom
+                || pakoogramActionBarFadeDark != dark) {
+            pakoogramActionBarFadeColor = baseColor;
+            pakoogramActionBarFadeTop = top;
+            pakoogramActionBarFadeBottom = bottom;
+            pakoogramActionBarFadeDark = dark;
+            pakoogramActionBarFadeGradient = new LinearGradient(0, top, 0, bottom,
+                    new int[]{
+                            ColorUtils.setAlphaComponent(baseColor, dark ? 0xC8 : 0xDC),
+                            ColorUtils.setAlphaComponent(baseColor, dark ? 0x70 : 0x88),
+                            ColorUtils.setAlphaComponent(baseColor, 0)
+                    },
+                    new float[]{0f, 0.68f, 1f}, Shader.TileMode.CLAMP);
+        }
+        pakoogramActionBarFadePaint.setShader(pakoogramActionBarFadeGradient);
+        canvas.drawRect(rect.left, top, rect.right, bottom, pakoogramActionBarFadePaint);
+        pakoogramActionBarFadePaint.setShader(null);
     }
 
     private void drawHeaderShadow(Canvas canvas, int sy) {

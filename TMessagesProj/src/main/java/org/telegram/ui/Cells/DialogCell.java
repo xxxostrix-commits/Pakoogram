@@ -568,6 +568,8 @@ public class DialogCell extends BaseCell implements StoriesListPlaceProvider.Ava
     private final Paint pakoogramCardPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint pakoogramCardGradientPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint pakoogramCardStrokePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private PakoogramAvatarPalette.PaletteData pakoogramPalette;
+    private int pakoogramCardGradientMode = -1;
     private final RectF pakoogramCardRect = new RectF();
     private final RectF pakoogramCardStrokeRect = new RectF();
     private LinearGradient pakoogramCardGradient;
@@ -3932,18 +3934,19 @@ public class DialogCell extends BaseCell implements StoriesListPlaceProvider.Ava
     private int getPakoogramTintColor() {
         final PakoogramAvatarPalette.PaletteData palette =
                 PakoogramAvatarPalette.getOrCreate(currentDialogId, avatarImage, avatarDrawable);
+        pakoogramPalette = palette;
         if (palette != null) {
-            // Тёмная тема — сочный акцент аватарки, светлая — воздушный пастельный оттенок.
-            return Theme.isCurrentThemeDark()
-                    ? palette.getAccentColor()
-                    : palette.getProfileCardColor(false);
+            // Карточка наследует режим аватарки: чёрный графит, серое стекло или акцент.
+            return palette.getDialogCardAccentColor(Theme.isCurrentThemeDark());
         }
         return Theme.getColor(Theme.key_chats_name, resourcesProvider);
     }
 
     /** Pakoogram: пересоздаёт шейдеры карточки, если изменился цвет, размер, тема или настройки. */
     @SuppressLint("DrawAllocation")
-    private void ensurePakoogramCardShaders(int color, int intensity, float radius, boolean dark) {
+    private void ensurePakoogramCardShaders(PakoogramAvatarPalette.PaletteData palette,
+                                            int color, int intensity, float radius, boolean dark) {
+        final int mode = palette != null ? palette.getMode() : -1;
         final int width = Math.round(pakoogramCardRect.width());
         final int height = Math.round(pakoogramCardRect.height());
         if (pakoogramCardGradient != null
@@ -3952,9 +3955,11 @@ public class DialogCell extends BaseCell implements StoriesListPlaceProvider.Ava
                 && pakoogramCardGradientHeight == height
                 && pakoogramCardGradientIntensity == intensity
                 && pakoogramCardGradientRadius == radius
-                && pakoogramCardGradientDark == dark) {
+                && pakoogramCardGradientDark == dark
+                && pakoogramCardGradientMode == mode) {
             return;
         }
+        pakoogramCardGradientMode = mode;
         pakoogramCardGradientColor = color;
         pakoogramCardGradientWidth = width;
         pakoogramCardGradientHeight = height;
@@ -3983,12 +3988,19 @@ public class DialogCell extends BaseCell implements StoriesListPlaceProvider.Ava
 
         pakoogramCardStrokePaint.setStyle(Paint.Style.STROKE);
         pakoogramCardStrokePaint.setStrokeWidth(Math.max(1f, dpf2(PAKOGRAM_CARD_STROKE_WIDTH)));
+        if (palette != null && (palette.isAmoledBlack() || palette.isMonochromeGray())) {
+            // AMOLED: тонкая тёмно-графитовая стеклянная обводка; монохром — дымчатая.
+            pakoogramCardStrokePaint.setShader(null);
+            pakoogramCardStrokePaint.setColor(palette.getDialogCardStrokeColor(dark));
+            return;
+        }
         // В тёмной теме блик по контуру тоже тонируется цветом аватарки — стекло «сочнее».
         final int strokeStart = dark
                 ? ColorUtils.setAlphaComponent(
                         ColorUtils.blendARGB(color, Color.WHITE, 0.55f),
                         PAKOGRAM_CARD_STROKE_START_ALPHA_DARK)
                 : PAKOGRAM_CARD_STROKE_START_COLOR;
+        pakoogramCardStrokePaint.setColor(PAKOGRAM_CARD_STROKE_END_COLOR);
         pakoogramCardStrokePaint.setShader(new LinearGradient(
                 pakoogramCardRect.left, pakoogramCardRect.top,
                 pakoogramCardRect.right, pakoogramCardRect.bottom,
@@ -4025,13 +4037,18 @@ public class DialogCell extends BaseCell implements StoriesListPlaceProvider.Ava
                 Math.min(pakoogramCardRect.width(), pakoogramCardRect.height()) / 2f);
         final int intensity = PakoogramConfig.getChatCardGradientIntensity();
         final boolean dark = Theme.isCurrentThemeDark();
-        ensurePakoogramCardShaders(color, intensity, radius, dark);
+        final PakoogramAvatarPalette.PaletteData palette = pakoogramPalette;
+        ensurePakoogramCardShaders(palette, color, intensity, radius, dark);
 
-        // 1. Матовая полупрозрачная подложка карточки.
+        // 1. Матовая подложка карточки в режиме палитры (AMOLED #050505, монохром #6E7681).
         pakoogramCardPaint.setShader(null);
         pakoogramCardPaint.setStyle(Paint.Style.FILL);
-        pakoogramCardPaint.setColor(Theme.getColor(Theme.key_windowBackgroundWhite, resourcesProvider));
-        pakoogramCardPaint.setAlpha(dark ? PAKOGRAM_CARD_BACKGROUND_ALPHA : 0x4D);
+        if (palette != null) {
+            pakoogramCardPaint.setColor(palette.getDialogCardColor(dark));
+        } else {
+            pakoogramCardPaint.setColor(Theme.getColor(Theme.key_windowBackgroundWhite, resourcesProvider));
+            pakoogramCardPaint.setAlpha(dark ? PAKOGRAM_CARD_BACKGROUND_ALPHA : 0x4D);
+        }
         canvas.drawRoundRect(pakoogramCardRect, radius, radius, pakoogramCardPaint);
 
         // 2. Горизонтальный многоступенчатый градиент цвета аватарки.

@@ -363,7 +363,7 @@ public class ProfileActivity extends BaseFragment implements NotificationCenter.
     private RecyclerListView listView;
     // Pakoogram: палитра аватарки для адаптивного профиля и свечения.
     private PakoogramAvatarPalette.PaletteData pakoogramPalette;
-    private PakoogramAvatarPalette.ThemedResourcesProvider pakoogramResourcesProvider;
+    private PakoogramResourcesProvider pakoogramResourcesProvider;
     private RecyclerListView searchListView;
     private LinearLayoutManager layoutManager;
     private ListAdapter listAdapter;
@@ -1384,6 +1384,7 @@ public class ProfileActivity extends BaseFragment implements NotificationCenter.
             final float radius = base * 2.4f;
             final float coreRadius = base * 1.35f;
             final float strength = brightness / 100f;
+            final int glowHalo = palette.getGlowHaloColor(brightness);
             final int glow = palette.getGlowColor(brightness);
             if (pakoogramGlowGradient == null || pakoogramGlowColor != glow
                     || pakoogramGlowRadius != radius || pakoogramGlowCx != cx
@@ -1395,7 +1396,7 @@ public class ProfileActivity extends BaseFragment implements NotificationCenter.
                 pakoogramGlowStrength = strength;
                 pakoogramGlowGradient = new RadialGradient(cx, cy, radius,
                         new int[]{
-                                ColorUtils.setAlphaComponent(glow, Math.round(0x8A * strength)),
+                                ColorUtils.setAlphaComponent(glowHalo, Math.round(0x8A * strength)),
                                 ColorUtils.setAlphaComponent(glow, Math.round(0x3C * strength)),
                                 ColorUtils.setAlphaComponent(glow, 0)
                         },
@@ -1565,23 +1566,32 @@ public class ProfileActivity extends BaseFragment implements NotificationCenter.
             }
             if (y1 != 0) {
                 final boolean pakoogramHeader = pakoogramPalette != null && !hasColorById;
-                paint.setColor(pakoogramHeader ? pakoogramPalette.getHeaderColor() : currentColor);
                 updateBackgroundPaint();
                 final float progressToGradient = (playProfileAnimation == 0 ? 1f : avatarAnimationProgress) * hasColorAnimated.set(hasColorById);
-                if (progressToGradient < 1) {
-                    canvas.drawRect(0, 0, getMeasuredWidth(), y1, paint);
-                }
-                if (progressToGradient > 0) {
+                if (!pakoogramHeader) {
+                    paint.setColor(currentColor);
+                    if (progressToGradient < 1) {
+                        canvas.drawRect(0, 0, getMeasuredWidth(), y1, paint);
+                    }
+                    if (progressToGradient > 0) {
+                        backgroundPaint.setAlpha((int) (0xFF * progressToGradient));
+                        canvas.drawRect(0, 0, getMeasuredWidth(), y1, backgroundPaint);
+                    }
+                } else if (progressToGradient > 0) {
+                    // Цвет собеседника (если он реально задан) остаётся градиентом.
                     backgroundPaint.setAlpha((int) (0xFF * progressToGradient));
                     canvas.drawRect(0, 0, getMeasuredWidth(), y1, backgroundPaint);
                 }
                 if (pakoogramHeader) {
-                    ensurePakoogramHeaderShader(y1);
-                    canvas.drawRect(0, 0, getMeasuredWidth(), y1, pakoogramHeaderPaint);
+                    // Pakoogram: шапка полностью прозрачна поверх единого фона экрана.
+                    // Рисуется только мягкое радиальное свечение за аватаркой, поэтому
+                    // под actionBar нет ни сплошной заливки, ни горизонтального шва.
+                    drawPakoogramAvatarGlow(canvas, Math.max(y1, getMeasuredHeight()));
+                } else {
+                    drawPakoogramAvatarGlow(canvas, y1);
+                    // Мягкий переход шапки в тело профиля вместо резкой горизонтальной границы.
+                    drawPakoogramHeaderTransition(canvas, y1);
                 }
-                drawPakoogramAvatarGlow(canvas, y1);
-                // Мягкий переход шапки в тело профиля вместо резкой горизонтальной границы.
-                drawPakoogramHeaderTransition(canvas, y1);
                 if (hasEmoji && !capturing) {
                     final float loadedScale = emojiLoadedT.set(isEmojiLoaded());
                     boolean shoudIgnore = openAnimationInProgress && playProfileAnimation == 2;
@@ -3857,7 +3867,8 @@ public class ProfileActivity extends BaseFragment implements NotificationCenter.
         // иначе нижняя часть профиля (вкладки, сетка подарков/медиа, кнопка подарка)
         // осталась бы в стандартных цветах темы.
         if (PakoogramConfig.isAdaptiveChatThemeEnabled()) {
-            pakoogramResourcesProvider = new PakoogramAvatarPalette.ThemedResourcesProvider(resourcesProvider);
+            final long pakoogramDialogId = userId != 0 ? userId : -chatId;
+            pakoogramResourcesProvider = new PakoogramResourcesProvider(resourcesProvider, pakoogramDialogId);
             resourcesProvider = pakoogramResourcesProvider;
         }
         createHeaderBar(context);
@@ -10041,6 +10052,12 @@ public class ProfileActivity extends BaseFragment implements NotificationCenter.
     @Override
     public void onResume() {
         super.onResume();
+        if (PakoogramConfig.isAdaptiveChatThemeEnabled()) {
+            // После смены светлой/тёмной темы кэш палитр уже очищен: пересчитываем
+            // оттенки и заново красим шапку, карточки и нижние вкладки профиля.
+            refreshPakoogramPalette();
+            applyPakoogramProfilePalette();
+        }
         if (sharedMediaLayout != null) {
             sharedMediaLayout.onResume();
         }
@@ -10339,8 +10356,16 @@ public class ProfileActivity extends BaseFragment implements NotificationCenter.
         int actionBarColor = actionBarAnimationColorFrom != 0 ? actionBarAnimationColorFrom : getThemedColor(Theme.key_actionBarDefault);
         int actionBarColor2 = actionBarColor;
         actionBarColor = ColorUtils.setAlphaComponent(actionBarColor, 0);
-        topView.setBackgroundColor(ColorUtils.blendARGB(actionBarColor, color, progress));
-        timerDrawable.setBackgroundColor(ColorUtils.blendARGB(actionBarColor2, color, progress));
+        if (pakoogramPalette != null && !hasColorById) {
+            // Pakoogram: при прокрутке шапка не перекрашивается в цвет аватарки —
+            // остаётся единый фон экрана, поэтому нет горизонтального шва.
+            final int pakoogramBackground = pakoogramPalette.getProfileBackgroundColor(Theme.isCurrentThemeDark());
+            topView.setBackgroundColor(pakoogramBackground);
+            timerDrawable.setBackgroundColor(pakoogramBackground);
+        } else {
+            topView.setBackgroundColor(ColorUtils.blendARGB(actionBarColor, color, progress));
+            timerDrawable.setBackgroundColor(ColorUtils.blendARGB(actionBarColor2, color, progress));
+        }
 
         color = peerColor != null ? Color.WHITE : AvatarDrawable.getIconColorForId(userId != 0 || ChatObject.isChannel(chatId, currentAccount) && !currentChat.megagroup ? 5 : chatId, resourcesProvider);
         int iconColor = getThemedColor(Theme.key_actionBarDefaultIcon);
@@ -10918,10 +10943,19 @@ public class ProfileActivity extends BaseFragment implements NotificationCenter.
         }
         if (topView != null) {
             topView.setPakoogramPalette(pakoogramPalette);
+            // Единый сплошной фон: topView больше не рисует отдельную шапку,
+            // поэтому его подложка совпадает с фоном тела профиля.
+            topView.setBackgroundColor(screen);
+        }
+        if (fragmentView != null) {
+            fragmentView.setBackgroundColor(screen);
         }
         if (actionBar != null) {
-            actionBar.setBackgroundColor(ColorUtils.setAlphaComponent(
-                    pakoogramPalette.getGlassPanelColor(dark), 0x33));
+            // Шапка полностью прозрачна поверх единого фона экрана: никакой
+            // горизонтальной границы и перепада цвета под actionBar.
+            actionBar.setBackgroundColor(Color.TRANSPARENT);
+            actionBar.setCastShadows(false);
+            actionBar.invalidate();
         }
         // Нижняя часть экрана: панель вкладок «Подарки / Медиа / Избранное»,
         // её активный индикатор, фон сетки подарков/медиа и плавающая кнопка подарка.
