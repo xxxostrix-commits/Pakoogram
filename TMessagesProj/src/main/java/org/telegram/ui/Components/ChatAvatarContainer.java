@@ -63,6 +63,7 @@ import org.telegram.ui.ActionBar.ThemeBind;
 import org.telegram.ui.Business.BusinessLinksController;
 import org.telegram.ui.ChatActivity;
 import org.telegram.ui.Components.Forum.ForumUtilities;
+import org.telegram.ui.PakoogramAnimations;
 import org.telegram.ui.ProfileActivity;
 import org.telegram.ui.Stories.StoriesUtilities;
 import org.telegram.ui.TopicsFragment;
@@ -555,6 +556,8 @@ public class ChatAvatarContainer extends FrameLayout implements FactorAnimator.T
     }
 
     public void openProfile(boolean byAvatar, boolean fromChatAnimation, boolean removeLast) {
+        // Pakoogram: профиль раскрывается из шапки чата или из самой аватарки.
+        PakoogramAnimations.captureOrigin(byAvatar ? avatarImageView : this);
         if (byAvatar && (AndroidUtilities.isTablet() || AndroidUtilities.displaySize.x > AndroidUtilities.displaySize.y || !avatarImageView.getImageReceiver().hasNotThumb())) {
             byAvatar = false;
         }

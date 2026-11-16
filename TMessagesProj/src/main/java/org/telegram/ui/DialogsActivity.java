@@ -4492,6 +4492,10 @@ public class DialogsActivity extends BaseFragment implements NotificationCenter.
             viewPage.listView.setOnItemClickListener((view, position, x, y) -> {
                 if (view instanceof GraySectionCell)
                     return;
+                if (view instanceof DialogCell) {
+                    // Pakoogram: из этой карточки раскроется чат — запоминаем её прямоугольник.
+                    PakoogramAnimations.captureOrigin(view);
+                }
                 if (view instanceof DialogCell && ((DialogCell) view).isBlocked()) {
                     showPremiumBlockedToast(view, ((DialogCell) view).getDialogId());
                     return;

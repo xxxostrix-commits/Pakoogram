@@ -377,6 +377,7 @@ public class ProfileActivity extends BaseFragment implements NotificationCenter.
     private int pakoogramScreenHaloColor;
     private float pakoogramScreenHaloCx = Float.NaN, pakoogramScreenHaloCy = Float.NaN;
     private float pakoogramScreenHaloRadius = -1f;
+    private boolean pakoogramScreenHaloDark;
     private RecyclerListView searchListView;
     private LinearLayoutManager layoutManager;
     private ListAdapter listAdapter;
@@ -5846,6 +5847,8 @@ public class ProfileActivity extends BaseFragment implements NotificationCenter.
             onlineTextView.setTranslationY(getOnlineTextViewTranslationYWithOffsets(lastOnlineTextViewY));
         });
         ratingView.setOnClickListener(this::showStarRatingBottomSheet);
+        // Pakoogram: пружинистая физика нажатий для кнопки рейтинга в шапке профиля.
+        PakoogramAnimations.attachSpringPress(ratingView);
         if (userInfo != null) {
             ratingView.set(userInfo.stars_rating);
         }
@@ -5921,6 +5924,8 @@ public class ProfileActivity extends BaseFragment implements NotificationCenter.
             writeButton.setContentDescription(LocaleController.getString(R.string.ViewDiscussion));
         }
         writeButton.setScaleType(ImageView.ScaleType.CENTER);
+        // Pakoogram: пружинистая физика нажатий для кнопки действия в шапке профиля.
+        PakoogramAnimations.attachSpringPress(writeButton);
 
         frameLayout.addView(writeButton, LayoutHelper.createFrame(60, 60, Gravity.RIGHT | Gravity.TOP, 0, 0, 16, 0));
         writeButton.setOnClickListener(v -> {
@@ -6139,6 +6144,8 @@ public class ProfileActivity extends BaseFragment implements NotificationCenter.
         bottomButton2Container.addView(buttonShadow, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, 1.0f / AndroidUtilities.density, Gravity.TOP | Gravity.FILL_HORIZONTAL, 0, 0, 0, 0));
         bottomButton2 = new ButtonWithCounterView(context, resourcesProvider);
         bottomButton2.setText(getString(R.string.Save), false);
+        // Pakoogram: пружинистая физика нажатий (если у кнопки нет собственной, как у ButtonWithCounterView).
+        PakoogramAnimations.attachSpringPress(bottomButton2);
         bottomButton2Container.addView(bottomButton2, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, 48, Gravity.FILL, 10, 10 + (1.0f / AndroidUtilities.density), 10, 10));
         bottomButton2.setOnClickListener(v -> {
             stopTabsReorder();
@@ -10940,9 +10947,16 @@ public class ProfileActivity extends BaseFragment implements NotificationCenter.
         final int glow = palette.getGlowColor(brightness);
         final int glowHalo = palette.getGlowHaloColor(brightness);
 
-        // Верх — насыщенный светящийся акцент палитры, низ — глубокий тёмный с его же подтоном.
-        final int top = ColorUtils.setAlphaComponent(palette.getDialogCardAccentColor(dark), 0xFF);
-        final int bottom = ColorUtils.blendARGB(top, Color.BLACK, dark ? 0.86f : 0.78f);
+        // Верх — глубокий приглушённый оттенок палитры (HSV V <= 0.16), низ — почти чёрный
+        // с тем же подтоном (V <= 0.07): фон не спорит с аватаркой и плавно растворяется
+        // в тёмной области вкладок без резкого стыка.
+        final int accent = palette.getDialogCardAccentColor(dark);
+        final int top = dark
+                ? pakoogramClampBrightness(accent, 0.16f)
+                : ColorUtils.setAlphaComponent(accent, 0xFF);
+        final int bottom = dark
+                ? pakoogramClampBrightness(ColorUtils.blendARGB(accent, Color.BLACK, 0.55f), 0.07f)
+                : ColorUtils.blendARGB(top, Color.BLACK, 0.78f);
         if (pakoogramScreenGradient == null || pakoogramScreenGradientHeight != height
                 || pakoogramScreenGradientTopColor != top || pakoogramScreenGradientBottomColor != bottom) {
             pakoogramScreenGradientHeight = height;
@@ -10965,15 +10979,18 @@ public class ProfileActivity extends BaseFragment implements NotificationCenter.
         }
         final float cx = pakoogramScreenAvatarRect.centerX();
         final float cy = pakoogramScreenAvatarRect.centerY();
-        final float radius = Math.max(avatarWidth, avatarHeight) * 2.8f;
+        // В тёмной теме ореол компактный и полупрозрачный (альфа ~0.32): аватарка контрастно
+        // выделяется, а фон не «светится» на всю ширину экрана.
+        final float radius = Math.max(avatarWidth, avatarHeight) * (dark ? 1.55f : 2.8f);
         if (pakoogramScreenHaloGradient == null || pakoogramScreenHaloColor != glow
-                || pakoogramScreenHaloRadius != radius) {
+                || pakoogramScreenHaloRadius != radius || pakoogramScreenHaloDark != dark) {
             pakoogramScreenHaloColor = glow;
             pakoogramScreenHaloRadius = radius;
+            pakoogramScreenHaloDark = dark;
             pakoogramScreenHaloGradient = new RadialGradient(0, 0, radius,
                     new int[]{
-                            ColorUtils.setAlphaComponent(glowHalo, 0xB4),
-                            ColorUtils.setAlphaComponent(glow, 0x4C),
+                            ColorUtils.setAlphaComponent(glowHalo, dark ? 0x52 : 0xB4),
+                            ColorUtils.setAlphaComponent(glow, dark ? 0x1F : 0x4C),
                             ColorUtils.setAlphaComponent(glow, 0)
                     },
                     new float[]{0f, 0.45f, 1f}, Shader.TileMode.CLAMP);
@@ -10990,6 +11007,25 @@ public class ProfileActivity extends BaseFragment implements NotificationCenter.
         pakoogramScreenHaloPaint.setShader(pakoogramScreenHaloGradient);
         canvas.drawCircle(cx, cy, radius, pakoogramScreenHaloPaint);
         pakoogramScreenHaloPaint.setShader(null);
+    }
+
+    /**
+     * Pakoogram: ограничивает яркость цвета (HSV {@code V}) сверху.
+     *
+     * <p>Нужно, чтобы фон профиля оставался глубоким и приглушённым: даже самый насыщенный
+     * акцент палитры не превращается в яркое пятно и не спорит с аватаркой.</p>
+     *
+     * @param color    исходный цвет (альфа сохраняется)
+     * @param maxValue максимальная яркость, 0..1
+     */
+    private static int pakoogramClampBrightness(int color, float maxValue) {
+        final float[] hsv = new float[3];
+        Color.colorToHSV(color, hsv);
+        if (hsv[2] <= maxValue) {
+            return color;
+        }
+        hsv[2] = maxValue;
+        return Color.HSVToColor(Color.alpha(color), hsv);
     }
 
     /**

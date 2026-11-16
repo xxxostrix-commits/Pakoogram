@@ -77,6 +77,7 @@ import org.telegram.ui.Components.AnimatedFloat;
 import org.telegram.ui.Components.BackButtonMenu;
 import org.telegram.ui.EmptyBaseFragment;
 import org.telegram.ui.MainTabsActivity;
+import org.telegram.ui.PakoogramAnimations;
 import org.telegram.ui.bots.BotWebViewSheet;
 import org.telegram.ui.Components.Bulletin;
 import org.telegram.ui.Components.ChatAttachAlert;
@@ -2328,6 +2329,19 @@ public class ActionBarLayout extends FrameLayout implements INavigationLayout, F
                 AnimatorSet animation = null;
                 if (!preview) {
                     animation = fragment.onCustomTransitionAnimation(true, () -> onAnimationEndCheck(false));
+                    if (animation == null && PakoogramAnimations.canAnimateTransition(fragment)) {
+                        // Pakoogram: «жидкий» переход ColorOS — экран раскрывается из карточки/шапки.
+                        animation = PakoogramAnimations.animateScreenTransition(true, containerView, containerViewBack,
+                                fragment, currentFragment, () -> onAnimationEndCheck(false));
+                        if (animation != null && !noDelay) {
+                            // У этого перехода нет отложенного старта (нужен, например, чату с фоном):
+                            // сообщаем фрагментам о начале сразу, иначе они останутся в исходном состоянии.
+                            if (currentFragment != null) {
+                                currentFragment.onTransitionAnimationStart(false, false);
+                            }
+                            fragment.onTransitionAnimationStart(true, false);
+                        }
+                    }
                 }
                 if (animation == null) {
                     containerView.setAlpha(0.0f);
@@ -2781,6 +2795,11 @@ public class ActionBarLayout extends FrameLayout implements INavigationLayout, F
                 AnimatorSet animation = null;
                 if (!inPreviewMode && !transitionAnimationPreviewMode) {
                     animation = currentFragment.onCustomTransitionAnimation(false, () -> onAnimationEndCheck(false));
+                    if (animation == null && PakoogramAnimations.canAnimateTransition(currentFragment)) {
+                        // Pakoogram: обратный морфинг — закрываемый экран сворачивается в карточку.
+                        animation = PakoogramAnimations.animateScreenTransition(false, containerView, containerViewBack,
+                                previousFragmentFinal, currentFragment, () -> onAnimationEndCheck(false));
+                    }
                 }
                 if (animation == null) {
                     if (!inPreviewMode && (containerView.isKeyboardVisible || containerViewBack.isKeyboardVisible)) {

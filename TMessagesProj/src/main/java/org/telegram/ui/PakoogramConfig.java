@@ -35,6 +35,14 @@ public class PakoogramConfig {
     public static final String KEY_CHAT_BACKGROUND_SATURATION = "chatBackgroundSaturation";
     /** Яркость свечения аватарки в профиле, 0..100%. */
     public static final String KEY_AVATAR_GLOW_BRIGHTNESS = "avatarGlowBrightness";
+    /** Анимации переходов ColorOS: морфинг экранов чата и профиля из карточки/шапки. */
+    public static final String KEY_TRANSITION_ANIMATIONS = "transitionAnimations";
+    /** Пружинистая физика нажатий на карточки чатов и кнопки действий. */
+    public static final String KEY_SPRING_PRESS = "springPress";
+    /** Сила размытия уходящего на задний план экрана при переходах, 0..40. */
+    public static final String KEY_TRANSITION_BLUR = "transitionBlur";
+    /** Скорость анимаций переходов, 50..150 в процентах (100 = 1.0x). */
+    public static final String KEY_ANIMATION_SPEED = "animationSpeed";
 
     public static final int DEFAULT_BLUR_INTENSITY = 85;
     public static final int DEFAULT_CORNER_RADIUS = 20;
@@ -47,6 +55,10 @@ public class PakoogramConfig {
     public static final boolean DEFAULT_ADAPTIVE_CHAT_THEME = true;
     public static final int DEFAULT_CHAT_BACKGROUND_SATURATION = 55;
     public static final int DEFAULT_AVATAR_GLOW_BRIGHTNESS = 70;
+    public static final boolean DEFAULT_TRANSITION_ANIMATIONS = true;
+    public static final boolean DEFAULT_SPRING_PRESS = true;
+    public static final int DEFAULT_TRANSITION_BLUR = 26;
+    public static final int DEFAULT_ANIMATION_SPEED = 100;
 
     public static final int MIN_BLUR_INTENSITY = 0;
     public static final int MAX_BLUR_INTENSITY = 100;
@@ -60,6 +72,10 @@ public class PakoogramConfig {
     public static final int MAX_CHAT_BACKGROUND_SATURATION = 100;
     public static final int MIN_AVATAR_GLOW_BRIGHTNESS = 0;
     public static final int MAX_AVATAR_GLOW_BRIGHTNESS = 100;
+    public static final int MIN_TRANSITION_BLUR = 0;
+    public static final int MAX_TRANSITION_BLUR = 40;
+    public static final int MIN_ANIMATION_SPEED = 50;
+    public static final int MAX_ANIMATION_SPEED = 150;
 
     private static SharedPreferences preferences;
 
@@ -264,6 +280,63 @@ public class PakoogramConfig {
                 .apply();
     }
 
+    /* ------------------------------------------------------ transitionAnimations */
+
+    /** Анимации переходов ColorOS, по умолчанию {@value #DEFAULT_TRANSITION_ANIMATIONS}. */
+    public static boolean isTransitionAnimationsEnabled() {
+        return getPreferences().getBoolean(KEY_TRANSITION_ANIMATIONS, DEFAULT_TRANSITION_ANIMATIONS);
+    }
+
+    public static void setTransitionAnimationsEnabled(boolean enabled) {
+        getPreferences().edit().putBoolean(KEY_TRANSITION_ANIMATIONS, enabled).apply();
+    }
+
+    /* -------------------------------------------------------------- springPress */
+
+    /** Пружинистая физика нажатий, по умолчанию {@value #DEFAULT_SPRING_PRESS}. */
+    public static boolean isSpringPressEnabled() {
+        return getPreferences().getBoolean(KEY_SPRING_PRESS, DEFAULT_SPRING_PRESS);
+    }
+
+    public static void setSpringPressEnabled(boolean enabled) {
+        getPreferences().edit().putBoolean(KEY_SPRING_PRESS, enabled).apply();
+    }
+
+    /* ----------------------------------------------------------- transitionBlur */
+
+    /** Сила размытия фона при переходах, по умолчанию {@value #DEFAULT_TRANSITION_BLUR}. */
+    public static int getTransitionBlurStrength() {
+        return clamp(getPreferences().getInt(KEY_TRANSITION_BLUR, DEFAULT_TRANSITION_BLUR),
+                MIN_TRANSITION_BLUR, MAX_TRANSITION_BLUR);
+    }
+
+    /** @param value сила размытия, зажимается в [{@value #MIN_TRANSITION_BLUR}; {@value #MAX_TRANSITION_BLUR}] */
+    public static void setTransitionBlurStrength(int value) {
+        getPreferences().edit()
+                .putInt(KEY_TRANSITION_BLUR, clamp(value, MIN_TRANSITION_BLUR, MAX_TRANSITION_BLUR))
+                .apply();
+    }
+
+    /* ----------------------------------------------------------- animationSpeed */
+
+    /** Скорость анимаций в процентах (50..150), по умолчанию {@value #DEFAULT_ANIMATION_SPEED}. */
+    public static int getAnimationSpeedPercent() {
+        return clamp(getPreferences().getInt(KEY_ANIMATION_SPEED, DEFAULT_ANIMATION_SPEED),
+                MIN_ANIMATION_SPEED, MAX_ANIMATION_SPEED);
+    }
+
+    /** @param value скорость в процентах, зажимается в [{@value #MIN_ANIMATION_SPEED}; {@value #MAX_ANIMATION_SPEED}] */
+    public static void setAnimationSpeedPercent(int value) {
+        getPreferences().edit()
+                .putInt(KEY_ANIMATION_SPEED, clamp(value, MIN_ANIMATION_SPEED, MAX_ANIMATION_SPEED))
+                .apply();
+    }
+
+    /** Множитель скорости анимаций: {@code 0.5f}..{@code 1.5f}, по умолчанию {@code 1.0f}. */
+    public static float getAnimationSpeed() {
+        return getAnimationSpeedPercent() / 100f;
+    }
+
     /* -------------------------------------------------------------------- сброс */
 
     /** Сбрасывает все настройки Pakoogram к значениям по умолчанию. */
@@ -280,6 +353,10 @@ public class PakoogramConfig {
                 .putBoolean(KEY_ADAPTIVE_CHAT_THEME, DEFAULT_ADAPTIVE_CHAT_THEME)
                 .putInt(KEY_CHAT_BACKGROUND_SATURATION, DEFAULT_CHAT_BACKGROUND_SATURATION)
                 .putInt(KEY_AVATAR_GLOW_BRIGHTNESS, DEFAULT_AVATAR_GLOW_BRIGHTNESS)
+                .putBoolean(KEY_TRANSITION_ANIMATIONS, DEFAULT_TRANSITION_ANIMATIONS)
+                .putBoolean(KEY_SPRING_PRESS, DEFAULT_SPRING_PRESS)
+                .putInt(KEY_TRANSITION_BLUR, DEFAULT_TRANSITION_BLUR)
+                .putInt(KEY_ANIMATION_SPEED, DEFAULT_ANIMATION_SPEED)
                 .apply();
     }
 }

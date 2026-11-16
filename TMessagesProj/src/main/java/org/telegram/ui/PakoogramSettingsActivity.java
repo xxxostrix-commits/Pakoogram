@@ -61,14 +61,18 @@ public class PakoogramSettingsActivity extends BaseFragment {
     private static final int ROW_BLUR_INTENSITY = 4;
     private static final int ROW_CORNER_RADIUS = 5;
     private static final int ROW_HEADER_INTERFACE = 6;
-    private static final int ROW_SPRING_PHYSICS = 7;
-    private static final int ROW_FLOATING_PANELS = 8;
-    private static final int ROW_GHOST_MODE = 9;
-    private static final int ROW_ADAPTIVE_CHAT_THEME = 10;
-    private static final int ROW_CHAT_BACKGROUND_SATURATION = 11;
-    private static final int ROW_AVATAR_GLOW_BRIGHTNESS = 12;
-    private static final int ROW_HEADER_ABOUT = 13;
-    private static final int ROW_COUNT = 14;
+    private static final int ROW_TRANSITION_ANIMATIONS = 7;
+    private static final int ROW_SPRING_PRESS = 8;
+    private static final int ROW_TRANSITION_BLUR = 9;
+    private static final int ROW_ANIMATION_SPEED = 10;
+    private static final int ROW_SPRING_PHYSICS = 11;
+    private static final int ROW_FLOATING_PANELS = 12;
+    private static final int ROW_GHOST_MODE = 13;
+    private static final int ROW_ADAPTIVE_CHAT_THEME = 14;
+    private static final int ROW_CHAT_BACKGROUND_SATURATION = 15;
+    private static final int ROW_AVATAR_GLOW_BRIGHTNESS = 16;
+    private static final int ROW_HEADER_ABOUT = 17;
+    private static final int ROW_COUNT = 18;
 
     private static final int[] BLUR_INTENSITY_VALUES =
             {0, 10, 20, 30, 40, 50, 60, 70, 75, 80, 85, 90, 95, 100};
@@ -149,6 +153,22 @@ public class PakoogramSettingsActivity extends BaseFragment {
                             }
                         });
                 break;
+            case ROW_TRANSITION_ANIMATIONS: {
+                boolean enabled = !PakoogramConfig.isTransitionAnimationsEnabled();
+                PakoogramConfig.setTransitionAnimationsEnabled(enabled);
+                if (view instanceof TextCheckCell) {
+                    ((TextCheckCell) view).setChecked(enabled);
+                }
+                break;
+            }
+            case ROW_SPRING_PRESS: {
+                boolean enabled = !PakoogramConfig.isSpringPressEnabled();
+                PakoogramConfig.setSpringPressEnabled(enabled);
+                if (view instanceof TextCheckCell) {
+                    ((TextCheckCell) view).setChecked(enabled);
+                }
+                break;
+            }
             case ROW_SPRING_PHYSICS: {
                 boolean enabled = !PakoogramConfig.isSpringPhysicsEnabled();
                 PakoogramConfig.setSpringPhysicsEnabled(enabled);
@@ -256,11 +276,15 @@ public class PakoogramSettingsActivity extends BaseFragment {
                 case ROW_GHOST_MODE:
                 case ROW_GLASS_CHAT_CARDS:
                 case ROW_ADAPTIVE_CHAT_THEME:
+                case ROW_TRANSITION_ANIMATIONS:
+                case ROW_SPRING_PRESS:
                     return VIEW_TYPE_CHECK;
                 case ROW_CHAT_CARD_GRADIENT:
                 case ROW_CHAT_CARD_CORNER_RADIUS:
                 case ROW_CHAT_BACKGROUND_SATURATION:
                 case ROW_AVATAR_GLOW_BRIGHTNESS:
+                case ROW_TRANSITION_BLUR:
+                case ROW_ANIMATION_SPEED:
                     return VIEW_TYPE_SLIDER;
                 default:
                     return VIEW_TYPE_SETTINGS;
@@ -317,6 +341,12 @@ public class PakoogramSettingsActivity extends BaseFragment {
                     } else if (position == ROW_ADAPTIVE_CHAT_THEME) {
                         checkCell.setTextAndCheck("Адаптивная тема чата и профиля",
                                 PakoogramConfig.isAdaptiveChatThemeEnabled(), false);
+                    } else if (position == ROW_TRANSITION_ANIMATIONS) {
+                        checkCell.setTextAndCheck("Анимации переходов ColorOS",
+                                PakoogramConfig.isTransitionAnimationsEnabled(), false);
+                    } else if (position == ROW_SPRING_PRESS) {
+                        checkCell.setTextAndCheck("Пружинистая физика нажатий",
+                                PakoogramConfig.isSpringPressEnabled(), false);
                     } else if (position == ROW_SPRING_PHYSICS) {
                         checkCell.setTextAndCheck("Пружинная анимация",
                                 PakoogramConfig.isSpringPhysicsEnabled(), false);
@@ -382,6 +412,36 @@ public class PakoogramSettingsActivity extends BaseFragment {
                                         notifyDialogsListChanged();
                                     }
                                 });
+                    } else if (position == ROW_TRANSITION_BLUR) {
+                        sliderCell.setContent("Сила размытия фона", "",
+                                PakoogramConfig.MIN_TRANSITION_BLUR,
+                                PakoogramConfig.MAX_TRANSITION_BLUR,
+                                PakoogramConfig.getTransitionBlurStrength(),
+                                new IntValueListener() {
+                                    @Override
+                                    public void onValueSelected(int value) {
+                                        PakoogramConfig.setTransitionBlurStrength(value);
+                                    }
+                                },
+                                null);
+                    } else if (position == ROW_ANIMATION_SPEED) {
+                        sliderCell.setContent("Скорость анимаций", "x",
+                                PakoogramConfig.MIN_ANIMATION_SPEED,
+                                PakoogramConfig.MAX_ANIMATION_SPEED,
+                                PakoogramConfig.getAnimationSpeedPercent(),
+                                new IntValueListener() {
+                                    @Override
+                                    public void onValueSelected(int value) {
+                                        PakoogramConfig.setAnimationSpeedPercent(value);
+                                    }
+                                },
+                                null,
+                                new PakoogramSliderCell.ValueFormatter() {
+                                    @Override
+                                    public String format(int value) {
+                                        return (value / 10) + "." + (value % 10) + "x";
+                                    }
+                                });
                     } else {
                         sliderCell.setContent("Яркость свечения аватарки", "%",
                                 PakoogramConfig.MIN_AVATAR_GLOW_BRIGHTNESS,
@@ -434,10 +494,16 @@ public class PakoogramSettingsActivity extends BaseFragment {
         private final SeekBar seekBar;
         private IntValueListener listener;
         private Runnable onTrackingStopped;
+        private ValueFormatter valueFormatter;
         private String valueSuffix = "";
         private int minValue;
         private int maxValue = 100;
         private boolean ignoreProgress;
+
+        /** Pakoogram: форматирование значения ползунка (например, {@code 1.0x} для скорости). */
+        interface ValueFormatter {
+            String format(int value);
+        }
 
         PakoogramSliderCell(Context context) {
             super(context);
@@ -470,7 +536,7 @@ public class PakoogramSettingsActivity extends BaseFragment {
                 @Override
                 public void onProgressChanged(SeekBar bar, int progress, boolean fromUser) {
                     final int value = getValue(progress);
-                    valueView.setText(value + valueSuffix);
+                    valueView.setText(formatValue(value));
                     if (fromUser && !ignoreProgress && listener != null) {
                         listener.onValueSelected(value);
                     }
@@ -491,8 +557,14 @@ public class PakoogramSettingsActivity extends BaseFragment {
 
         void setContent(String title, String suffix, int min, int max, int value,
                         IntValueListener listener, Runnable onTrackingStopped) {
+            setContent(title, suffix, min, max, value, listener, onTrackingStopped, null);
+        }
+
+        void setContent(String title, String suffix, int min, int max, int value,
+                        IntValueListener listener, Runnable onTrackingStopped, ValueFormatter formatter) {
             this.listener = listener;
             this.onTrackingStopped = onTrackingStopped;
+            this.valueFormatter = formatter;
             this.valueSuffix = suffix == null ? "" : suffix;
             this.minValue = min;
             this.maxValue = Math.max(min + 1, max);
@@ -503,7 +575,11 @@ public class PakoogramSettingsActivity extends BaseFragment {
             ignoreProgress = false;
 
             titleView.setText(title);
-            valueView.setText(clampValue(value) + this.valueSuffix);
+            valueView.setText(formatValue(clampValue(value)));
+        }
+
+        private String formatValue(int value) {
+            return valueFormatter != null ? valueFormatter.format(value) : value + valueSuffix;
         }
 
         private int clampValue(int value) {
