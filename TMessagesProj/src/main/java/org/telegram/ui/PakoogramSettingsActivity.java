@@ -1,8 +1,6 @@
 package org.telegram.ui;
 
-import android.app.AlertDialog;
 import android.content.Context;
-import android.content.DialogInterface;
 import android.content.res.ColorStateList;
 import android.graphics.Canvas;
 import android.graphics.ColorFilter;
@@ -35,6 +33,8 @@ import org.telegram.ui.Cells.TextSettingsCell;
 import org.telegram.ui.Components.LayoutHelper;
 import org.telegram.ui.Components.RecyclerListView;
 
+import java.util.Locale;
+
 /**
  * Pakoogram: экран настроек форка.
  *
@@ -44,8 +44,7 @@ import org.telegram.ui.Components.RecyclerListView;
  *
  * <p>Экран построен на стандартных элементах Telegram: {@link RecyclerListView},
  * {@link HeaderCell}, {@link TextCheckCell} и {@link TextSettingsCell}. Числовые параметры
- * ({@code blurIntensity}, {@code cornerRadius}) выбираются по клику из списка допустимых
- * значений, булевы переключаются сразу.</p>
+ * настраиваются ползунками {@link PakoogramSliderCell}, булевы переключаются сразу.</p>
  */
 public class PakoogramSettingsActivity extends BaseFragment {
 
@@ -58,26 +57,18 @@ public class PakoogramSettingsActivity extends BaseFragment {
     private static final int ROW_GLASS_CHAT_CARDS = 1;
     private static final int ROW_CHAT_CARD_GRADIENT = 2;
     private static final int ROW_CHAT_CARD_CORNER_RADIUS = 3;
-    private static final int ROW_BLUR_INTENSITY = 4;
-    private static final int ROW_CORNER_RADIUS = 5;
-    private static final int ROW_HEADER_INTERFACE = 6;
-    private static final int ROW_TRANSITION_ANIMATIONS = 7;
-    private static final int ROW_SPRING_PRESS = 8;
-    private static final int ROW_TRANSITION_BLUR = 9;
-    private static final int ROW_ANIMATION_SPEED = 10;
-    private static final int ROW_SPRING_PHYSICS = 11;
-    private static final int ROW_FLOATING_PANELS = 12;
-    private static final int ROW_GHOST_MODE = 13;
-    private static final int ROW_ADAPTIVE_CHAT_THEME = 14;
-    private static final int ROW_CHAT_BACKGROUND_SATURATION = 15;
-    private static final int ROW_AVATAR_GLOW_BRIGHTNESS = 16;
-    private static final int ROW_HEADER_ABOUT = 17;
-    private static final int ROW_COUNT = 18;
-
-    private static final int[] BLUR_INTENSITY_VALUES =
-            {0, 10, 20, 30, 40, 50, 60, 70, 75, 80, 85, 90, 95, 100};
-    private static final int[] CORNER_RADIUS_VALUES =
-            {0, 2, 4, 8, 12, 16, 20, 24, 28, 32, 36, 40};
+    private static final int ROW_HEADER_INTERFACE = 4;
+    private static final int ROW_TRANSITION_ANIMATIONS = 5;
+    private static final int ROW_SPRING_PRESS = 6;
+    private static final int ROW_TRANSITION_BLUR = 7;
+    private static final int ROW_ANIMATION_SPEED = 8;
+    private static final int ROW_FLOATING_PANELS = 9;
+    private static final int ROW_GHOST_MODE = 10;
+    private static final int ROW_ADAPTIVE_CHAT_THEME = 11;
+    private static final int ROW_CHAT_BACKGROUND_SATURATION = 12;
+    private static final int ROW_AVATAR_GLOW_BRIGHTNESS = 13;
+    private static final int ROW_HEADER_ABOUT = 14;
+    private static final int ROW_COUNT = 15;
 
     private RecyclerListView listView;
     private ListAdapter listAdapter;
@@ -135,24 +126,6 @@ public class PakoogramSettingsActivity extends BaseFragment {
                 notifyDialogsListChanged();
                 break;
             }
-            case ROW_BLUR_INTENSITY:
-                showIntValueSelector("Интенсивность размытия", BLUR_INTENSITY_VALUES,
-                        PakoogramConfig.getBlurIntensity(), new IntValueListener() {
-                            @Override
-                            public void onValueSelected(int value) {
-                                PakoogramConfig.setBlurIntensity(value);
-                            }
-                        });
-                break;
-            case ROW_CORNER_RADIUS:
-                showIntValueSelector("Радиус скругления", CORNER_RADIUS_VALUES,
-                        PakoogramConfig.getCornerRadius(), new IntValueListener() {
-                            @Override
-                            public void onValueSelected(int value) {
-                                PakoogramConfig.setCornerRadius(value);
-                            }
-                        });
-                break;
             case ROW_TRANSITION_ANIMATIONS: {
                 boolean enabled = !PakoogramConfig.isTransitionAnimationsEnabled();
                 PakoogramConfig.setTransitionAnimationsEnabled(enabled);
@@ -164,14 +137,6 @@ public class PakoogramSettingsActivity extends BaseFragment {
             case ROW_SPRING_PRESS: {
                 boolean enabled = !PakoogramConfig.isSpringPressEnabled();
                 PakoogramConfig.setSpringPressEnabled(enabled);
-                if (view instanceof TextCheckCell) {
-                    ((TextCheckCell) view).setChecked(enabled);
-                }
-                break;
-            }
-            case ROW_SPRING_PHYSICS: {
-                boolean enabled = !PakoogramConfig.isSpringPhysicsEnabled();
-                PakoogramConfig.setSpringPhysicsEnabled(enabled);
                 if (view instanceof TextCheckCell) {
                     ((TextCheckCell) view).setChecked(enabled);
                 }
@@ -207,42 +172,6 @@ public class PakoogramSettingsActivity extends BaseFragment {
         NotificationCenter.getGlobalInstance().postNotificationName(NotificationCenter.dialogsNeedReload);
     }
 
-    private void showIntValueSelector(CharSequence title, final int[] values, int currentValue,
-                                      final IntValueListener listener) {
-        if (getParentActivity() == null) {
-            return;
-        }
-        final CharSequence[] labels = new CharSequence[values.length];
-        int checkedIndex = 0;
-        for (int a = 0; a < values.length; a++) {
-            labels[a] = String.valueOf(values[a]);
-            if (values[a] == currentValue) {
-                checkedIndex = a;
-            }
-        }
-        AlertDialog.Builder builder = new AlertDialog.Builder(getParentActivity());
-        builder.setTitle(title);
-        builder.setSingleChoiceItems(labels, checkedIndex, new DialogInterface.OnClickListener() {
-            @Override
-            public void onClick(DialogInterface dialog, int which) {
-                if (which >= 0 && which < values.length) {
-                    listener.onValueSelected(values[which]);
-                    if (listAdapter != null) {
-                        listAdapter.notifyDataSetChanged();
-                    }
-                }
-                dialog.dismiss();
-            }
-        });
-        builder.setNegativeButton("Отмена", new DialogInterface.OnClickListener() {
-            @Override
-            public void onClick(DialogInterface dialog, int which) {
-                dialog.dismiss();
-            }
-        });
-        builder.show();
-    }
-
     @Override
     public void onResume() {
         super.onResume();
@@ -271,7 +200,6 @@ public class PakoogramSettingsActivity extends BaseFragment {
                 case ROW_HEADER_INTERFACE:
                 case ROW_HEADER_ABOUT:
                     return VIEW_TYPE_HEADER;
-                case ROW_SPRING_PHYSICS:
                 case ROW_FLOATING_PANELS:
                 case ROW_GHOST_MODE:
                 case ROW_GLASS_CHAT_CARDS:
@@ -347,9 +275,6 @@ public class PakoogramSettingsActivity extends BaseFragment {
                     } else if (position == ROW_SPRING_PRESS) {
                         checkCell.setTextAndCheck("Пружинистая физика нажатий",
                                 PakoogramConfig.isSpringPressEnabled(), false);
-                    } else if (position == ROW_SPRING_PHYSICS) {
-                        checkCell.setTextAndCheck("Пружинная анимация",
-                                PakoogramConfig.isSpringPhysicsEnabled(), false);
                     } else if (position == ROW_FLOATING_PANELS) {
                         checkCell.setTextAndCheck("Плавающие панели",
                                 PakoogramConfig.isFloatingPanelsEnabled(), false);
@@ -429,6 +354,7 @@ public class PakoogramSettingsActivity extends BaseFragment {
                                 PakoogramConfig.MIN_ANIMATION_SPEED,
                                 PakoogramConfig.MAX_ANIMATION_SPEED,
                                 PakoogramConfig.getAnimationSpeedPercent(),
+                                PakoogramConfig.ANIMATION_SPEED_STEP,
                                 new IntValueListener() {
                                     @Override
                                     public void onValueSelected(int value) {
@@ -439,7 +365,7 @@ public class PakoogramSettingsActivity extends BaseFragment {
                                 new PakoogramSliderCell.ValueFormatter() {
                                     @Override
                                     public String format(int value) {
-                                        return (value / 10) + "." + (value % 10) + "x";
+                                        return String.format(Locale.US, "%.1fx", value / 100f);
                                     }
                                 });
                     } else {
@@ -465,15 +391,7 @@ public class PakoogramSettingsActivity extends BaseFragment {
                 case VIEW_TYPE_SETTINGS:
                 default: {
                     TextSettingsCell settingsCell = (TextSettingsCell) holder.itemView;
-                    if (position == ROW_BLUR_INTENSITY) {
-                        settingsCell.setTextAndValue("Интенсивность размытия",
-                                PakoogramConfig.getBlurIntensity() + "%", true);
-                    } else if (position == ROW_CORNER_RADIUS) {
-                        settingsCell.setTextAndValue("Радиус скругления",
-                                PakoogramConfig.getCornerRadius() + " dp", true);
-                    } else {
-                        settingsCell.setTextAndValue("Версия Pakoogram", "1.0", false);
-                    }
+                    settingsCell.setTextAndValue("Версия Pakoogram", "1.0", false);
                     break;
                 }
             }
@@ -498,6 +416,7 @@ public class PakoogramSettingsActivity extends BaseFragment {
         private String valueSuffix = "";
         private int minValue;
         private int maxValue = 100;
+        private int stepValue = 1;
         private boolean ignoreProgress;
 
         /** Pakoogram: форматирование значения ползунка (например, {@code 1.0x} для скорости). */
@@ -557,37 +476,59 @@ public class PakoogramSettingsActivity extends BaseFragment {
 
         void setContent(String title, String suffix, int min, int max, int value,
                         IntValueListener listener, Runnable onTrackingStopped) {
-            setContent(title, suffix, min, max, value, listener, onTrackingStopped, null);
+            setContent(title, suffix, min, max, value, 1, listener, onTrackingStopped, null);
         }
 
         void setContent(String title, String suffix, int min, int max, int value,
+                        IntValueListener listener, Runnable onTrackingStopped, ValueFormatter formatter) {
+            setContent(title, suffix, min, max, value, 1, listener, onTrackingStopped, formatter);
+        }
+
+        /**
+         * @param step шаг ползунка в единицах значения (например, {@code 10} для 0.1x
+         *             при хранении скорости анимаций в процентах)
+         */
+        void setContent(String title, String suffix, int min, int max, int value, int step,
                         IntValueListener listener, Runnable onTrackingStopped, ValueFormatter formatter) {
             this.listener = listener;
             this.onTrackingStopped = onTrackingStopped;
             this.valueFormatter = formatter;
             this.valueSuffix = suffix == null ? "" : suffix;
+            this.stepValue = Math.max(1, step);
             this.minValue = min;
-            this.maxValue = Math.max(min + 1, max);
+            this.maxValue = Math.max(min + this.stepValue, max);
 
+            final int currentValue = clampValue(value);
             ignoreProgress = true;
-            seekBar.setMax(this.maxValue - this.minValue);
-            seekBar.setProgress(clampValue(value) - this.minValue);
+            seekBar.setMax((this.maxValue - this.minValue) / this.stepValue);
+            seekBar.setProgress(progressForValue(currentValue));
             ignoreProgress = false;
 
             titleView.setText(title);
-            valueView.setText(formatValue(clampValue(value)));
+            valueView.setText(formatValue(currentValue));
         }
 
         private String formatValue(int value) {
             return valueFormatter != null ? valueFormatter.format(value) : value + valueSuffix;
         }
 
+        /** Приводит значение к сетке шага и зажимает в [{@code minValue}; {@code maxValue}]. */
         private int clampValue(int value) {
-            return Math.max(minValue, Math.min(maxValue, value));
+            if (value <= minValue) {
+                return minValue;
+            }
+            final int steps = Math.round((value - minValue) / (float) stepValue);
+            final int snapped = minValue + Math.max(0, steps) * stepValue;
+            return Math.min(maxValue, snapped);
+        }
+
+        private int progressForValue(int value) {
+            final int progress = Math.round((value - minValue) / (float) stepValue);
+            return Math.max(0, Math.min(seekBar.getMax(), progress));
         }
 
         private int getValue(int progress) {
-            return clampValue(minValue + progress);
+            return clampValue(minValue + progress * stepValue);
         }
     }
 

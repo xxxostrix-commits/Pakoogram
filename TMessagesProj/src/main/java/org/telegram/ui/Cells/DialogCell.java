@@ -555,13 +555,15 @@ public class DialogCell extends BaseCell implements StoriesListPlaceProvider.Ava
     private static final float PAKOGRAM_CARD_MARGIN_VERTICAL = 2.5f;
     private static final float PAKOGRAM_CARD_STROKE_WIDTH = 1f;
     private static final int PAKOGRAM_CARD_BACKGROUND_ALPHA = 0x66;
-    private static final int PAKOGRAM_CARD_GRADIENT_START_ALPHA = 0x59;   // ~35%
-    private static final int PAKOGRAM_CARD_GRADIENT_MIDDLE_ALPHA = 0x29;  // ~16%
-    private static final int PAKOGRAM_CARD_GRADIENT_END_ALPHA = 0x0F;     // ~6%
+    // Альфы горизонтального градиента карточки: слева (под аватаркой) — яркий акцент чата,
+    // к середине — лёгкая дымка, справа — полное растворение в базовом фоне карточки.
+    private static final int PAKOGRAM_CARD_GRADIENT_START_ALPHA = 0x38;   // ~22%
+    private static final int PAKOGRAM_CARD_GRADIENT_MIDDLE_ALPHA = 0x1A;  // ~10%
+    private static final int PAKOGRAM_CARD_GRADIENT_END_ALPHA = 0x00;     // 0%
     // В тёмной теме карточки «сочнее»: больше цвета и ярче блик по контуру.
-    private static final int PAKOGRAM_CARD_GRADIENT_START_ALPHA_DARK = 0x78;   // ~47%
-    private static final int PAKOGRAM_CARD_GRADIENT_MIDDLE_ALPHA_DARK = 0x3D;  // ~24%
-    private static final int PAKOGRAM_CARD_GRADIENT_END_ALPHA_DARK = 0x18;     // ~9%
+    private static final int PAKOGRAM_CARD_GRADIENT_START_ALPHA_DARK = 0x61;  // ~38%
+    private static final int PAKOGRAM_CARD_GRADIENT_MIDDLE_ALPHA_DARK = 0x1A; // ~10%
+    private static final int PAKOGRAM_CARD_GRADIENT_END_ALPHA_DARK = 0x00;    // 0%
     private static final int PAKOGRAM_CARD_STROKE_START_COLOR = 0x38FFFFFF; // ~22% белого
     private static final int PAKOGRAM_CARD_STROKE_END_COLOR = 0x00FFFFFF;
     private static final int PAKOGRAM_CARD_STROKE_START_ALPHA_DARK = 0x59;  // ~35% тонированного блика
@@ -805,8 +807,8 @@ public class DialogCell extends BaseCell implements StoriesListPlaceProvider.Ava
         emojiStatus = new AnimatedEmojiDrawable.SwapAnimatedEmojiDrawable(emojiStatusView, dp(22));
         botVerification = new AnimatedEmojiDrawable.SwapAnimatedEmojiDrawable(this, dp(17));
         avatarImage.setAllowLoadingOnAttachedOnly(true);
-        // Pakoogram: пружинистое сжатие карточки при нажатии (жесты списка не затрагиваются).
-        PakoogramAnimations.attachSpringPress(this);
+        // Pakoogram: spring-сжатие на DialogCell отключено — при переиспользовании ячеек
+        // во время скролла карточки залипали в сжатом размере 0.96f.
     }
 
     @Override
@@ -830,6 +832,8 @@ public class DialogCell extends BaseCell implements StoriesListPlaceProvider.Ava
     }
 
     public void setDialog(TLRPC.Dialog dialog, int type, int folder) {
+        // Pakoogram: ячейка переиспользуется — сбрасываем залипшие масштаб/прозрачность и кэш цвета карточки.
+        resetPakoogramCellVisualState();
         if (currentDialogId != dialog.id) {
             if (statusDrawableAnimator != null) {
                 statusDrawableAnimator.removeAllListeners();
@@ -876,6 +880,8 @@ public class DialogCell extends BaseCell implements StoriesListPlaceProvider.Ava
     }
 
     public void setDialog(CustomDialog dialog) {
+        // Pakoogram: сброс визуального состояния и кэша карточки при переиспользовании ячейки.
+        resetPakoogramCellVisualState();
         customDialog = dialog;
         messageId = 0;
         update(0);
@@ -959,6 +965,8 @@ public class DialogCell extends BaseCell implements StoriesListPlaceProvider.Ava
     }
 
     public void setDialog(long dialog_id, MessageObject messageObject, int date, boolean useMe, boolean animated) {
+        // Pakoogram: сброс визуального состояния и кэша карточки при переиспользовании ячейки.
+        resetPakoogramCellVisualState();
         if (currentDialogId != dialog_id) {
             lastStatusDrawableParams = -1;
         }
@@ -983,6 +991,8 @@ public class DialogCell extends BaseCell implements StoriesListPlaceProvider.Ava
     }
 
     public void setDialog(long dialog_id, MessageObject messageObject, ArrayList<MessageObject> groupMessageObject, int date, boolean useMe, boolean animated) {
+        // Pakoogram: сброс визуального состояния и кэша карточки при переиспользовании ячейки.
+        resetPakoogramCellVisualState();
         if (currentDialogId != dialog_id) {
             lastStatusDrawableParams = -1;
         }
@@ -1022,6 +1032,8 @@ public class DialogCell extends BaseCell implements StoriesListPlaceProvider.Ava
     @Override
     protected void onDetachedFromWindow() {
         super.onDetachedFromWindow();
+        // Pakoogram: не оставляем ячейке сжатие/смещение и чужой цвет карточки после открепления.
+        resetPakoogramCellVisualState();
         isSliding = false;
         drawRevealBackground = false;
         currentRevealProgress = 0.0f;
@@ -3945,6 +3957,32 @@ public class DialogCell extends BaseCell implements StoriesListPlaceProvider.Ava
         return Theme.getColor(Theme.key_chats_name, resourcesProvider);
     }
 
+    /**
+     * Pakoogram: принудительно сбрасывает «залипшие» визуальные состояния ячейки и кэш карточки.
+     *
+     * <p>Вызывается при переиспользовании ячейки (в начале каждого {@code setDialog(...)}) и при
+     * откреплении от окна. Без сброса масштаб/смещение от предыдущего нажатия и цвет карточки
+     * предыдущего диалога оставались на новой ячейке: при скролле карточки «зависали» в сжатом
+     * размере, а фон заливался чужим оттенком.</p>
+     */
+    private void resetPakoogramCellVisualState() {
+        setScaleX(1f);
+        setScaleY(1f);
+        setAlpha(1f);
+        setTranslationX(0f);
+        setTranslationY(0f);
+        pakoogramPalette = null;
+        pakoogramCardGradient = null;
+        pakoogramCardGradientColor = 0;
+        pakoogramCardGradientWidth = -1;
+        pakoogramCardGradientHeight = -1;
+        pakoogramCardGradientIntensity = -1;
+        pakoogramCardGradientRadius = -1f;
+        pakoogramCardGradientMode = -1;
+        pakoogramCardGradientDark = false;
+        pakoogramCardGradientPaint.setShader(null);
+    }
+
     /** Pakoogram: пересоздаёт шейдеры карточки, если изменился цвет, размер, тема или настройки. */
     @SuppressLint("DrawAllocation")
     private void ensurePakoogramCardShaders(PakoogramAvatarPalette.PaletteData palette,
@@ -3985,7 +4023,9 @@ public class DialogCell extends BaseCell implements StoriesListPlaceProvider.Ava
                         Color.argb(Math.round(middleAlpha * factor), red, green, blue),
                         Color.argb(Math.round(endAlpha * factor), red, green, blue)
                 },
-                new float[]{0f, 0.5f, 1f},
+                // Слева (под аватаркой) — яркий акцент чата, к 45% ширины — дымка,
+                // к правому краю — полное растворение в базовом фоне карточки.
+                new float[]{0f, 0.45f, 1f},
                 Shader.TileMode.CLAMP);
         pakoogramCardGradientPaint.setShader(pakoogramCardGradient);
 
@@ -4015,10 +4055,11 @@ public class DialogCell extends BaseCell implements StoriesListPlaceProvider.Ava
     /**
      * Pakoogram: рисует «стеклянную» карточку диалога.
      *
-     * <p>Порядок слоёв: матовая полупрозрачная подложка → горизонтальный
-     * многоступенчатый градиент цвета аватарки → тонкий световой блик по контуру.
-     * Вызывается из {@link #onDraw(Canvas)} до аватарки и текста, поэтому карточка
-     * всегда остаётся под содержимым ячейки.</p>
+     * <p>Порядок слоёв: базовый тёмный/светлый фон карточки → горизонтальный градиент
+     * слева направо ({@code x0 = левый край}, {@code x1 = правый край}) с акцентным цветом
+     * чата (альфа 0.38 → 0.10 → 0.0 в тёмной теме и 0.22 → 0.10 → 0.0 в светлой) → тонкий
+     * световой блик по контуру. Вызывается из {@link #onDraw(Canvas)} до аватарки и текста,
+     * поэтому карточка всегда остаётся под содержимым ячейки.</p>
      */
     private void drawPakoogramCard(Canvas canvas) {
         if (!PakoogramConfig.isGlassChatCardsEnabled() || translationX != 0) {
@@ -4043,7 +4084,7 @@ public class DialogCell extends BaseCell implements StoriesListPlaceProvider.Ava
         final PakoogramAvatarPalette.PaletteData palette = pakoogramPalette;
         ensurePakoogramCardShaders(palette, color, intensity, radius, dark);
 
-        // 1. Матовая подложка карточки в режиме палитры (AMOLED #050505, монохром #6E7681).
+        // 1. Базовый тёмный/светлый фон карточки (AMOLED #050505, монохром #6E7681).
         pakoogramCardPaint.setShader(null);
         pakoogramCardPaint.setStyle(Paint.Style.FILL);
         if (palette != null) {
@@ -4054,7 +4095,7 @@ public class DialogCell extends BaseCell implements StoriesListPlaceProvider.Ava
         }
         canvas.drawRoundRect(pakoogramCardRect, radius, radius, pakoogramCardPaint);
 
-        // 2. Горизонтальный многоступенчатый градиент цвета аватарки.
+        // 2. Горизонтальный градиент акцентного цвета чата: ярко слева → растворение справа.
         if (intensity > 0) {
             canvas.drawRoundRect(pakoogramCardRect, radius, radius, pakoogramCardGradientPaint);
         }

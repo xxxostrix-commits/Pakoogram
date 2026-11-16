@@ -1817,6 +1817,9 @@ public class ActionBarLayout extends FrameLayout implements INavigationLayout, F
     }
 
     private void onAnimationEndCheck(boolean byCheck) {
+        // До запуска end-руннеблов запоминаем, чем был переход: после них это уже не узнать.
+        final boolean wasOpening = onOpenAnimationEndRunnable != null;
+        final boolean previewTransition = inPreviewMode || transitionAnimationPreviewMode;
         onCloseAnimationEnd();
         onOpenAnimationEnd();
         if (waitingForKeyboardCloseRunnable != null) {
@@ -1834,12 +1837,16 @@ public class ActionBarLayout extends FrameLayout implements INavigationLayout, F
             animationRunnable = null;
         }
         setAlpha(1.0f);
-        containerView.setAlpha(1.0f);
-        containerView.setScaleX(1.0f);
-        containerView.setScaleY(1.0f);
-        containerViewBack.setAlpha(1.0f);
-        containerViewBack.setScaleX(1.0f);
-        containerViewBack.setScaleY(1.0f);
+        // Pakoogram: принудительно снимаем с обоих контейнеров остатки морфинга — масштаб, альфу,
+        // сдвиги, обрезку по контуру и RenderEffect. Иначе после перехода на экране остаётся
+        // остаточное изображение (сжатый или смещённый слой).
+        PakoogramAnimations.resetScreenEffects(containerView);
+        PakoogramAnimations.resetScreenEffects(containerViewBack);
+        if (wasOpening && !previewTransition && !startedTracking && containerViewBack != null) {
+            // Нижний слой после открытия экрана больше не нужен: пока он видим, он участвует
+            // в layout и может оставлять след от морфинга.
+            containerViewBack.setVisibility(View.GONE);
+        }
     }
 
     public BaseFragment getLastFragment() {
@@ -1927,6 +1934,13 @@ public class ActionBarLayout extends FrameLayout implements INavigationLayout, F
             animationProgress = 0.0f;
             lastFrameTime = System.nanoTime() / 1000000;
         }
+        // Pakoogram: при включённых ColorOS-переходах морфинг сам ведёт масштаб, альфу и скругление,
+        // поэтому штатный горизонтальный сдвиг Telegram (dp(48)) для чата и профиля выключаем —
+        // иначе он перебивает морф-анимацию из PakoogramAnimations. Пока идёт (или доигрывает)
+        // жест свайпа назад, сдвиг нужен самому жесту, поэтому его не трогаем.
+        final boolean swipeBack = startedTracking || animationInProgress;
+        final boolean colorOsMorphWithoutSlide = !preview && !swipeBack
+                && (PakoogramAnimations.canAnimateTransition(newFragment) || PakoogramAnimations.canAnimateTransition(oldFragment));
         AndroidUtilities.runOnUIThread(animationRunnable = new Runnable() {
             @Override
             public void run() {
@@ -2007,7 +2021,9 @@ public class ActionBarLayout extends FrameLayout implements INavigationLayout, F
                         containerView.invalidate();
                         invalidate();
                     } else {
-                        containerView.setTranslationX(dp(48) * (1.0f - interpolated));
+                        // Pakoogram: для чата/профиля горизонтальный сдвиг Telegram не нужен — экран
+                        // раскрывается морфингом, а сдвиг только смещал бы его относительно источника.
+                        containerView.setTranslationX(colorOsMorphWithoutSlide ? 0f : dp(48) * (1.0f - interpolated));
                     }
                 } else {
                     float clampedReverseInterpolated = MathUtils.clamp(1f - interpolated, 0, 1);
@@ -2022,7 +2038,7 @@ public class ActionBarLayout extends FrameLayout implements INavigationLayout, F
                         containerView.invalidate();
                         invalidate();
                     } else {
-                        containerViewBack.setTranslationX(dp(48) * interpolated);
+                        containerViewBack.setTranslationX(colorOsMorphWithoutSlide ? 0f : dp(48) * interpolated);
                     }
                 }
                 if (animationProgress < 1) {
