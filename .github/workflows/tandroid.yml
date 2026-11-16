@@ -59,7 +59,11 @@ jobs:
           sudo apt -y install ninja-build meson nasm gperf pkg-config unzip pip
           rustup target add aarch64-linux-android armv7-linux-androideabi i686-linux-android x86_64-linux-android
           rustup toolchain install 1.96.1 -t aarch64-linux-android,armv7-linux-androideabi,i686-linux-android,x86_64-linux-android
-          ./gradlew :TMessagesProj_App:assembleAfatDebug --stacktrace
+          # Pakoogram: сборка идёт только под arm64-v8a (-Parm64-v8a): flavor afat ограничен
+          # arm64-v8a, а buildNativeDeps в этом режиме собирает префиксы только под arm64.
+          # Все четыре Rust-таргета остаются установленными, т.к. их наличие проверяют
+          # скрипты TMessagesProj/jni/prebuild (build_tlottie.sh, build_wallet_engine.sh).
+          ./gradlew :TMessagesProj_App:assembleAfatDebug -Parm64-v8a --stacktrace
 
       - name: Collect debug APK.
         run: |

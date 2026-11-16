@@ -295,10 +295,19 @@ task buildNativeDeps(description: 'Build native dependencies.') {
                 depsNdk = project.hasProperty('NATIVE_DEPS_NDK_DIR') ? project.property('NATIVE_DEPS_NDK_DIR') : System.getenv('NATIVE_DEPS_NDK_DIR')
             }
             def ndkDir = (depsNdk != null && !depsNdk.toString().isEmpty()) ? depsNdk : android.ndkDirectory
+            // Pakoogram: префиксы нативных библиотек собираются только под запрошенную ABI,
+            // чтобы arm64-only сборка (arm64-v8a) не тратила время на armeabi-v7a.
+            def arches = ['arm', 'arm64']
+            if (project.hasProperty('arm64-v8a')) {
+                arches = ['arm64']
+            } else if (project.hasProperty('armeabi-v7a')) {
+                arches = ['arm']
+            }
             println "NDK Directory: ${ndkDir}"
             println "Working Directory: ${projectDir}/jni"
             workingDir "${projectDir}/jni"
-            commandLine 'python3', 'prepare.py', 'silent', 'ndk=' + ndkDir, 'arm', 'arm64'
+            String[] command = (['python3', 'prepare.py', 'silent', 'ndk=' + ndkDir] + arches) as String[]
+            commandLine command
         }
     }
 }
