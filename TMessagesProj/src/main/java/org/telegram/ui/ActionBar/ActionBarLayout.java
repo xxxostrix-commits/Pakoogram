@@ -769,6 +769,8 @@ public class ActionBarLayout extends FrameLayout implements INavigationLayout, F
     private View backgroundView;
     private boolean removeActionBarExtraHeight;
     private Runnable animationRunnable;
+    /** Pakoogram: переход сейчас полностью ведёт {@code PakoogramAnimations}, штатный аниматор молчит. */
+    private boolean pakoogramMorphRunning;
 
     private float animationProgress;
     private long lastFrameTime;
@@ -1836,6 +1838,7 @@ public class ActionBarLayout extends FrameLayout implements INavigationLayout, F
             AndroidUtilities.cancelRunOnUIThread(animationRunnable);
             animationRunnable = null;
         }
+        pakoogramMorphRunning = false;
         setAlpha(1.0f);
         // Pakoogram: принудительно снимаем с обоих контейнеров остатки морфинга — масштаб, альфу,
         // сдвиги, обрезку по контуру и RenderEffect. Иначе после перехода на экране остаётся
@@ -1846,6 +1849,82 @@ public class ActionBarLayout extends FrameLayout implements INavigationLayout, F
             // Нижний слой после открытия экрана больше не нужен: пока он видим, он участвует
             // в layout и может оставлять след от морфинга.
             containerViewBack.setVisibility(View.GONE);
+        }
+    }
+
+    /**
+     * Pakoogram: создаёт и сразу запускает «жидкий» переход ColorOS, если он уместен для текущей
+     * пары экранов (открывается/закрывается чат или профиль и включён переключатель в настройках).
+     *
+     * <p>Штатный пошаговый аниматор этого класса ({@code animationRunnable} + {@code animationProgress})
+     * каждый кадр переписывает {@code translationX}, {@code scaleX/Y} и {@code alpha} контейнеров,
+     * поэтому при старте морфинга он отменяется и до конца перехода не перезапускается. Длительность
+     * задаёт сам {@link PakoogramAnimations}: 380 мс на открытие и 280 мс на закрытие, поделённые
+     * на множитель скорости из настроек.</p>
+     *
+     * @param open {@code true} — раскрытие нового экрана, {@code false} — закрытие текущего
+     * @return запущенный аниматор для {@code currentAnimation} или {@code null}, если морфинг не нужен
+     */
+    private AnimatorSet createPakoogramMorphAnimation(final boolean open) {
+        if (containerView == null || containerViewBack == null) {
+            return null;
+        }
+        if (!PakoogramAnimations.canAnimateTransition(newFragment) && !PakoogramAnimations.canAnimateTransition(oldFragment)) {
+            return null;
+        }
+        if (animationRunnable != null) {
+            AndroidUtilities.cancelRunOnUIThread(animationRunnable);
+            animationRunnable = null;
+        }
+        final AnimatorSet animation = PakoogramAnimations.animateScreenTransition(
+                open, containerView, containerViewBack, newFragment, oldFragment,
+                () -> onAnimationEndCheck(false));
+        if (animation == null) {
+            return null;
+        }
+        pakoogramMorphRunning = true;
+        animation.addListener(new AnimatorListenerAdapter() {
+            @Override
+            public void onAnimationEnd(Animator animator) {
+                onPakoogramMorphFinished(open);
+            }
+
+            @Override
+            public void onAnimationCancel(Animator animator) {
+                onPakoogramMorphFinished(open);
+            }
+        });
+        return animation;
+    }
+
+    /**
+     * Pakoogram: завершение морфинга — снимает остаточный кадр. Масштаб, альфа и сдвиги обоих
+     * контейнеров возвращаются к исходным, обрезка по контуру выключается, а после раскрытия
+     * нижний слой прячется, чтобы он не участвовал в layout.
+     */
+    private void onPakoogramMorphFinished(boolean open) {
+        pakoogramMorphRunning = false;
+        if (containerView != null) {
+            PakoogramAnimations.resetScreenEffects(containerView);
+            containerView.setScaleX(1f);
+            containerView.setScaleY(1f);
+            containerView.setTranslationX(0f);
+            containerView.setTranslationY(0f);
+            containerView.setAlpha(1f);
+            containerView.setClipToOutline(false);
+        }
+        if (containerViewBack != null) {
+            PakoogramAnimations.resetScreenEffects(containerViewBack);
+            containerViewBack.setScaleX(1f);
+            containerViewBack.setScaleY(1f);
+            containerViewBack.setTranslationX(0f);
+            containerViewBack.setTranslationY(0f);
+            containerViewBack.setAlpha(1f);
+            containerViewBack.setClipToOutline(false);
+            if (open) {
+                // После раскрытия нижний слой не нужен: пока он видим, он оставляет след морфинга.
+                containerViewBack.setVisibility(View.GONE);
+            }
         }
     }
 
@@ -1939,8 +2018,19 @@ public class ActionBarLayout extends FrameLayout implements INavigationLayout, F
         // иначе он перебивает морф-анимацию из PakoogramAnimations. Пока идёт (или доигрывает)
         // жест свайпа назад, сдвиг нужен самому жесту, поэтому его не трогаем.
         final boolean swipeBack = startedTracking || animationInProgress;
-        final boolean colorOsMorphWithoutSlide = !preview && !swipeBack
+        final boolean colorOsMorphWithoutSlide = !preview && !inPreviewMode && !transitionAnimationPreviewMode && !swipeBack
                 && (PakoogramAnimations.canAnimateTransition(newFragment) || PakoogramAnimations.canAnimateTransition(oldFragment));
+        if (first && colorOsMorphWithoutSlide && !pakoogramMorphRunning) {
+            // Pakoogram: переключатель «Анимации переходов ColorOS» включён и пользователь не тянет
+            // экран назад — переход ведёт исключительно PakoogramAnimations (380 мс открытие,
+            // 280 мс закрытие, оба делятся на множитель скорости). Штатный пошаговый аниматор
+            // в такой переход не вмешивается, иначе он перезаписывал бы translationX/scale/alpha.
+            final AnimatorSet pakoogramAnimation = createPakoogramMorphAnimation(open);
+            if (pakoogramAnimation != null) {
+                currentAnimation = pakoogramAnimation;
+                return;
+            }
+        }
         AndroidUtilities.runOnUIThread(animationRunnable = new Runnable() {
             @Override
             public void run() {
@@ -1948,6 +2038,11 @@ public class ActionBarLayout extends FrameLayout implements INavigationLayout, F
                     return;
                 }
                 animationRunnable = null;
+                if (pakoogramMorphRunning) {
+                    // Pakoogram: этот переход полностью ведёт PakoogramAnimations — его кадры
+                    // (translationX, scaleX/Y, alpha, скругление) перезаписывать нельзя.
+                    return;
+                }
                 if (first) {
                     transitionAnimationStartTime = System.currentTimeMillis();
                 }
@@ -2345,10 +2440,10 @@ public class ActionBarLayout extends FrameLayout implements INavigationLayout, F
                 AnimatorSet animation = null;
                 if (!preview) {
                     animation = fragment.onCustomTransitionAnimation(true, () -> onAnimationEndCheck(false));
-                    if (animation == null && PakoogramAnimations.canAnimateTransition(fragment)) {
-                        // Pakoogram: «жидкий» переход ColorOS — экран раскрывается из карточки/шапки.
-                        animation = PakoogramAnimations.animateScreenTransition(true, containerView, containerViewBack,
-                                fragment, currentFragment, () -> onAnimationEndCheck(false));
+                    if (animation == null) {
+                        // Pakoogram: «жидкий» переход ColorOS — экран раскрывается из карточки/шапки,
+                        // а если прямоугольник нажатия не сохранился — из центра экрана (fallback).
+                        animation = createPakoogramMorphAnimation(true);
                         if (animation != null && !noDelay) {
                             // У этого перехода нет отложенного старта (нужен, например, чату с фоном):
                             // сообщаем фрагментам о начале сразу, иначе они останутся в исходном состоянии.
@@ -2811,10 +2906,10 @@ public class ActionBarLayout extends FrameLayout implements INavigationLayout, F
                 AnimatorSet animation = null;
                 if (!inPreviewMode && !transitionAnimationPreviewMode) {
                     animation = currentFragment.onCustomTransitionAnimation(false, () -> onAnimationEndCheck(false));
-                    if (animation == null && PakoogramAnimations.canAnimateTransition(currentFragment)) {
-                        // Pakoogram: обратный морфинг — закрываемый экран сворачивается в карточку.
-                        animation = PakoogramAnimations.animateScreenTransition(false, containerView, containerViewBack,
-                                previousFragmentFinal, currentFragment, () -> onAnimationEndCheck(false));
+                    if (animation == null) {
+                        // Pakoogram: обратный морфинг — закрываемый экран сворачивается в карточку
+                        // (или в центр экрана, если прямоугольник нажатия не сохранился), 280 мс.
+                        animation = createPakoogramMorphAnimation(false);
                     }
                 }
                 if (animation == null) {

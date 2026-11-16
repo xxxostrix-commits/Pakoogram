@@ -556,8 +556,12 @@ public class ChatAvatarContainer extends FrameLayout implements FactorAnimator.T
     }
 
     public void openProfile(boolean byAvatar, boolean fromChatAnimation, boolean removeLast) {
-        // Pakoogram: профиль раскрывается из шапки чата или из самой аватарки.
-        PakoogramAnimations.captureOrigin(byAvatar ? avatarImageView : this);
+        // Pakoogram: профиль раскрывается из шапки чата или из самой аватарки. Если выбранный
+        // элемент ещё не разложен (аватарка скрыта в альбомной ориентации/на планшете),
+        // берём всю плашку — иначе прямоугольник будет нулевым и переход уйдёт в fallback.
+        final View originView = byAvatar && avatarImageView.getWidth() > 0 && avatarImageView.getHeight() > 0
+                ? avatarImageView : this;
+        PakoogramAnimations.captureOrigin(originView);
         if (byAvatar && (AndroidUtilities.isTablet() || AndroidUtilities.displaySize.x > AndroidUtilities.displaySize.y || !avatarImageView.getImageReceiver().hasNotThumb())) {
             byAvatar = false;
         }

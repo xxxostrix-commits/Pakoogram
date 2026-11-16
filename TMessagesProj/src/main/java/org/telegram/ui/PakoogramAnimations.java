@@ -56,10 +56,15 @@ public final class PakoogramAnimations {
     private static final float OUTGOING_SCALE = 0.94f;
     /** Лёгкое затемнение нижнего слоя (доля непрозрачности чёрной подложки). */
     private static final float OUTGOING_DIM_ALPHA = 0.24f;
-    /** Масштаб, с которого начинается раскрытие, если прямоугольник-источник неизвестен. */
-    private static final float FALLBACK_START_SCALE = 0.86f;
-    /** Базовая длительность перехода до применения множителя скорости из настроек. */
-    private static final long BASE_TRANSITION_DURATION = 360L;
+    /**
+     * Масштаб «запасного» перехода, когда прямоугольник нажатой карточки/шапки неизвестен:
+     * экран раскрывается из центра экрана ({@code 0.88f -> 1.0f}) и так же сворачивается обратно.
+     */
+    private static final float FALLBACK_SCALE = 0.88f;
+    /** Базовая длительность открытия экрана до применения множителя скорости из настроек. */
+    private static final long BASE_OPEN_DURATION = 380L;
+    /** Базовая длительность закрытия экрана до применения множителя скорости из настроек. */
+    private static final long BASE_CLOSE_DURATION = 280L;
     /** Скругление раскрывающегося экрана, которое «разгибается» до нуля. */
     private static final int CORNER_RADIUS_DP = 24;
     /** Сколько живёт запомненный прямоугольник: защита от «протухшего» источника. */
@@ -192,6 +197,10 @@ public final class PakoogramAnimations {
      * карточки/шапки до {@code 1.0f}) со «разгибанием» скругления углов, а нижний слой уходит
      * вглубь и слегка затемняется.</p>
      *
+     * <p>Если прямоугольник нажатия по какой-то причине не сохранился (fallback), переход всё равно
+     * играет: экран раскрывается из центра экрана {@code 0.88f -> 1.0f}, проявляясь по альфе
+     * {@code 0.0f -> 1.0f}, а скругление 24dp «разгибается» до нуля.</p>
+     *
      * <p>Закрытие — обратный процесс: закрываемый экран сворачивается назад в карточку,
      * а возвращающийся экран выходит из глубины и постепенно выбирает затемнение.</p>
      *
@@ -215,7 +224,8 @@ public final class PakoogramAnimations {
         }
         final Rect incomingOrigin = getOriginInView(incoming);
         final Rect outgoingOrigin = getOriginInView(outgoing);
-        final long duration = getTransitionDuration();
+        // 380 мс на открытие и 280 мс на закрытие — уже поделённые на множитель скорости из настроек.
+        final long duration = getTransitionDuration(open);
         final float cornerRadius = AndroidUtilities.dp(CORNER_RADIUS_DP);
 
         // Сброс возможных хвостов предыдущих переходов: дальше двигаем только масштаб/альфу/скругление.
@@ -330,11 +340,15 @@ public final class PakoogramAnimations {
         if (open) {
             // Точка и масштаб пересчитываются каждый кадр: первый кадр может прийти до layout.
             setPivot(incoming, incomingOrigin);
-            final float startScale = computeOriginScale(incoming, incomingOrigin);
+            final boolean fromOrigin = incomingOrigin != null;
             // Новый экран плавно раскрывается из прямоугольника нажатого элемента.
+            final float startScale = fromOrigin ? computeOriginScale(incoming, incomingOrigin) : FALLBACK_SCALE;
             final float incomingScale = lerp(startScale, 1f, p);
             incoming.setScaleX(incomingScale);
             incoming.setScaleY(incomingScale);
+            // Без сохранённого прямоугольника одного масштаба почти не видно (0.88..1.0 в центре экрана),
+            // поэтому экран дополнительно проявляется по альфе и читается как плавное раскрытие.
+            incoming.setAlpha(fromOrigin ? 1f : p);
             applyCornerRadius(incoming, cornerRadius * (1f - p));
             incoming.invalidate();
             // Нижний слой уходит вглубь и слегка затемняется.
@@ -353,12 +367,14 @@ public final class PakoogramAnimations {
             incoming.invalidate();
             // Закрываемый экран сворачивается назад в карточку с обратным скруглением.
             setPivot(outgoing, outgoingOrigin);
-            final float endScale = computeOriginScale(outgoing, outgoingOrigin);
+            final boolean intoOrigin = outgoingOrigin != null;
+            final float endScale = intoOrigin ? computeOriginScale(outgoing, outgoingOrigin) : FALLBACK_SCALE;
             final float outgoingScale = lerp(1f, endScale, p);
             outgoing.setScaleX(outgoingScale);
             outgoing.setScaleY(outgoingScale);
-            // Почти не гасим закрываемый экран, пока он сворачивается: виден сам морфинг в карточку.
-            outgoing.setAlpha(1f - 0.85f * p);
+            // Из карточки экран почти не гасим (виден сам морфинг), а без прямоугольника —
+            // сворачиваемся в центр экрана и растворяемся, иначе переход был бы незаметен.
+            outgoing.setAlpha(intoOrigin ? 1f - 0.85f * p : 1f - p);
             applyCornerRadius(outgoing, cornerRadius * p);
             outgoing.invalidate();
         }
@@ -442,7 +458,7 @@ public final class PakoogramAnimations {
     /** Масштаб, при котором экран по размеру совпадает с нажатой карточкой/шапкой. */
     private static float computeOriginScale(View view, Rect origin) {
         if (origin == null || view == null || view.getWidth() <= 0 || view.getHeight() <= 0) {
-            return FALLBACK_START_SCALE;
+            return FALLBACK_SCALE;
         }
         final float scale = Math.max(
                 origin.width() / (float) view.getWidth(),
@@ -450,10 +466,26 @@ public final class PakoogramAnimations {
         return clamp(scale, 0.2f, 1f);
     }
 
-    /** Базовая длительность 360 мс делится на множитель скорости из настроек (0.5x..1.5x). */
-    private static long getTransitionDuration() {
+    /**
+     * Длительность перехода с учётом множителя скорости из настроек (0.5x..1.5x):
+     * {@value #BASE_OPEN_DURATION} мс на открытие и {@value #BASE_CLOSE_DURATION} мс на закрытие при 1.0x.
+     *
+     * @param open {@code true} — раскрытие экрана, {@code false} — закрытие
+     */
+    public static long getTransitionDuration(boolean open) {
         final float speed = PakoogramConfig.getAnimationSpeed();
-        return Math.max(120L, (long) (BASE_TRANSITION_DURATION / Math.max(0.25f, speed)));
+        final long base = open ? BASE_OPEN_DURATION : BASE_CLOSE_DURATION;
+        return Math.max(120L, (long) (base / Math.max(0.25f, speed)));
+    }
+
+    /** Длительность открытия экрана: 380 мс, поделённые на множитель скорости. */
+    public static long getOpenTransitionDuration() {
+        return getTransitionDuration(true);
+    }
+
+    /** Длительность закрытия экрана: 280 мс, поделённые на множитель скорости. */
+    public static long getCloseTransitionDuration() {
+        return getTransitionDuration(false);
     }
 
     /** Кривая быстрого подрыва и «маслянистого» довода ColorOS. */
