@@ -296,6 +296,7 @@ import org.telegram.ui.Components.blur3.BlurredBackgroundDrawableViewFactory;
 import org.telegram.ui.Components.blur3.DownscaleScrollableNoiseSuppressor;
 import org.telegram.ui.Components.blur3.drawable.color.BlurredBackgroundColorProviderThemed;
 import org.telegram.ui.Components.blur3.drawable.color.BlurredBackgroundColorProvider;
+import org.telegram.ui.Components.blur3.drawable.color.BlurredBackgroundProvider;
 import org.telegram.ui.Components.blur3.drawable.color.impl.BlurredBackgroundProviderImpl;
 import org.telegram.utils.glass.source.GlassSourceWrapped;
 import org.telegram.utils.glass.source.GlassSourceCrossfade;
@@ -542,6 +543,12 @@ public class ChatActivity extends BaseFragment implements
     private PakoogramAvatarPalette.PaletteData pakoogramPalette;
     // Pakoogram: градиент фона переписки, построенный по палитре аватарки.
     private Drawable pakoogramChatBackground;
+    // Pakoogram: стекло верхних плавающих капсул (имя, звонок, меню) и панели закреплённого сообщения.
+    private BlurredBackgroundProvider pakoogramTopGlassProvider;
+    private BlurredBackgroundDrawable pakoogramTopPanelGlass;
+    private int pakoogramGlassAppliedTint;
+    private int pakoogramGlassAppliedDark = -1;
+    private int pakoogramPinnedPlateColor;
     private ChatBigEmptyView bigEmptyView;
     private ArrayList<View> actionModeViews = new ArrayList<>();
     public ChatAvatarContainer avatarContainer;
@@ -4919,7 +4926,7 @@ public class ChatActivity extends BaseFragment implements
 
         actionBar.setupGlass(
             glassBackgroundDrawableFactory,
-            BlurredBackgroundProviderImpl.topPanelChatActivity(themeDelegate),
+            pakoogramTopGlassProvider = createPakoogramTopGlassProvider(),
             ChatObject.isForum(currentChat));
         setupHeaderMenuOverlay(parentView);
         actionBar.setGlassAvatarCorners(AndroidUtilities.avatarCornersType());
@@ -9404,10 +9411,11 @@ public class ChatActivity extends BaseFragment implements
         }
 
         checkUi_topPanelLayoutWidth();
-        topPanelLayout.setBlurredBackground(glassBackgroundDrawableFactory.create(topPanelLayout)
-            .setColorProvider(BlurredBackgroundProviderImpl.topPanelChatActivity(themeDelegate))
+        pakoogramTopPanelGlass = glassBackgroundDrawableFactory.create(topPanelLayout)
+            .setColorProvider(createPakoogramTopGlassProvider())
             .setRadius(dp(18))
-            .setPadding(dp(7)));
+            .setPadding(dp(7));
+        topPanelLayout.setBlurredBackground(pakoogramTopPanelGlass);
 
         if (chatMode == MODE_SEARCH) {
             animatorSearchResultAsListVisibility.setValue(true, false);
@@ -12636,6 +12644,8 @@ public class ChatActivity extends BaseFragment implements
         });
 
         updatePinnedListButton(false);
+        // Pakoogram: панель закреплённого сообщения тоже получает оттенок палитры аватарки.
+        applyPakoogramGlassTint();
     }
 
     private void openAnotherForward() {
@@ -45927,13 +45937,157 @@ public class ChatActivity extends BaseFragment implements
     }
 
     /**
+     * Pakoogram: провайдер цветов стекла верхних плавающих капсул шапки (блок с
+     * именем/аватаркой, кнопки звонка и меню) и панели закреплённого сообщения.
+     *
+     * <p>Провайдер читает палитру «на лету»: как только палитра появилась или
+     * сменилась, drawable получает оттенок стекла аватарки вместо стандартного
+     * цвета темы. Все остальные параметры стекла (обводка, тень, компактный режим)
+     * делегируются стандартному провайдеру верхней панели.</p>
+     */
+    private BlurredBackgroundProvider createPakoogramTopGlassProvider() {
+        final BlurredBackgroundProvider base = BlurredBackgroundProviderImpl.topPanelChatActivity(themeDelegate);
+        return new BlurredBackgroundProvider() {
+            @Override
+            public int getBackgroundColor() {
+                final PakoogramAvatarPalette.PaletteData palette = pakoogramPalette;
+                if (palette == null) {
+                    return base.getBackgroundColor();
+                }
+                final boolean dark = Theme.isCurrentThemeDark();
+                final float alpha = LiteMode.isEnabled(LiteMode.FLAG_LIQUID_GLASS) ? 0.86f : 0.8f;
+                return Theme.multAlpha(palette.getGlassPanelColor(dark), alpha);
+            }
+
+            @Override
+            public int getShadowColor() {
+                return base.getShadowColor();
+            }
+
+            @Override
+            public int getStrokeColorTop() {
+                return base.getStrokeColorTop();
+            }
+
+            @Override
+            public int getStrokeColorBottom() {
+                return base.getStrokeColorBottom();
+            }
+
+            @Override
+            public int getOutlineShadowColor() {
+                return base.getOutlineShadowColor();
+            }
+
+            @Override
+            public int getOutlineColor() {
+                return base.getOutlineColor();
+            }
+
+            @Override
+            public float getOutlineWidth() {
+                return base.getOutlineWidth();
+            }
+
+            @Override
+            public float getStrokeWidthTop() {
+                return base.getStrokeWidthTop();
+            }
+
+            @Override
+            public float getStrokeWidthBottom() {
+                return base.getStrokeWidthBottom();
+            }
+
+            @Override
+            public float getShadowRadius() {
+                return base.getShadowRadius();
+            }
+
+            @Override
+            public float getShadowDx() {
+                return base.getShadowDx();
+            }
+
+            @Override
+            public float getShadowDy() {
+                return base.getShadowDy();
+            }
+
+            @Override
+            public float getShadowRadiusOverride() {
+                return base.getShadowRadiusOverride();
+            }
+
+            @Override
+            public float getShadowDyOverride() {
+                return base.getShadowDyOverride();
+            }
+        };
+    }
+
+    /**
+     * Pakoogram: перекрашивает стекло шапки и панели закреплённого сообщения в
+     * оттенок палитры аватарки. Вызывается только когда палитра (или тема) реально
+     * сменилась, поэтому drawable не пересоздаются на каждом кадре.
+     */
+    private void applyPakoogramGlassTint() {
+        final PakoogramAvatarPalette.PaletteData palette = pakoogramPalette;
+        if (palette == null) {
+            return;
+        }
+        // Панель закреплённого сообщения перекрашиваем всегда: она может быть создана позже палитры.
+        applyPakoogramPinnedBackground();
+        final int tint = palette.getDominantColor();
+        final boolean dark = Theme.isCurrentThemeDark();
+        final int darkFlag = dark ? 1 : 0;
+        if (pakoogramGlassAppliedTint == tint && pakoogramGlassAppliedDark == darkFlag) {
+            return;
+        }
+        pakoogramGlassAppliedTint = tint;
+        pakoogramGlassAppliedDark = darkFlag;
+        if (pakoogramTopGlassProvider == null) {
+            pakoogramTopGlassProvider = createPakoogramTopGlassProvider();
+        }
+        if (actionBar != null) {
+            actionBar.setGlassColorProvider(pakoogramTopGlassProvider);
+        }
+        if (pakoogramTopPanelGlass != null) {
+            pakoogramTopPanelGlass.setColorProvider(pakoogramTopGlassProvider);
+            pakoogramTopPanelGlass.invalidateSelf();
+        }
+        if (topPanelLayout != null) {
+            topPanelLayout.invalidate();
+        }
+    }
+
+    /** Pakoogram: матовая стеклянная подложка панели закреплённого сообщения в оттенке палитры. */
+    private void applyPakoogramPinnedBackground() {
+        final PakoogramAvatarPalette.PaletteData palette = pakoogramPalette;
+        if (pinnedMessageView == null || palette == null) {
+            return;
+        }
+        final boolean dark = Theme.isCurrentThemeDark();
+        final int plate = ColorUtils.setAlphaComponent(palette.getGlassPanelColor(dark), dark ? 0x4D : 0x33);
+        if (pakoogramPinnedPlateColor == plate) {
+            return;
+        }
+        pakoogramPinnedPlateColor = plate;
+        final int ripple = ColorUtils.setAlphaComponent(Color.WHITE, dark ? 0x26 : 0x30);
+        pinnedMessageView.setBackground(Theme.createRadSelectorDrawable(plate, ripple, 8, 8));
+        pinnedMessageView.invalidate();
+    }
+
+    /**
      * Pakoogram: применяет адаптивную тему переписки.
      *
-     * <p>Фон переписки заменяется мягким тёмным градиентом в оттенках аватарки
-     * собеседника (насыщенность регулируется в настройках), а шапка и панель ввода
-     * получают полупрозрачный матовый оттенок той же палитры. Палитра берётся из
-     * общего кэша {@link PakoogramAvatarPalette}, поэтому цвета совпадают с карточками
-     * в списке чатов и с профилем.</p>
+     * <p>Фон переписки заменяется мягким градиентом в оттенках аватарки
+     * собеседника (насыщенность регулируется в настройках), верхние плавающие
+     * капсулы шапки, панель закреплённого сообщения и панель ввода получают
+     * полупрозрачный матовый оттенок той же палитры, а акцентные кнопки панели
+     * ввода (микрофон/отправка, меню бота) — её яркий акцент. Палитра берётся из
+     * общего кэша {@link PakoogramAvatarPalette}, поэтому цвета совпадают с
+     * карточками в списке чатов и с профилем.</p>
      */
     private void applyPakoogramAdaptiveTheme() {
         if (!PakoogramConfig.isAdaptiveChatThemeEnabled() || dialog_id == 0) {
@@ -45965,11 +46119,16 @@ public class ChatActivity extends BaseFragment implements
             contentView.invalidateBackground();
         }
 
+        applyPakoogramGlassTint();
+
         if (actionBar != null) {
             actionBar.setBackgroundColor(ColorUtils.setAlphaComponent(glass, 0xD9));
+            actionBar.invalidate();
         }
         if (chatActivityEnterView != null) {
             chatActivityEnterView.setPakoogramPanelTint(glass, 0.7f);
+            // Круглая кнопка микрофона/отправки, меню бота и акцентные иконки.
+            chatActivityEnterView.setPakoogramAccentColor(palette.getAccentColor());
         }
         if (chatInputViewsContainer != null) {
             chatInputViewsContainer.invalidate();

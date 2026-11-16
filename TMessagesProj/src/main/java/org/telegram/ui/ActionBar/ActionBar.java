@@ -264,6 +264,27 @@ public class ActionBar extends FrameLayout implements FactorAnimator.Target, The
         applyGlassAvatarCorners();
     }
 
+    /**
+     * Pakoogram: заменяет провайдер цветов стеклянных капсул шапки (имя/аватарка,
+     * кнопки звонка и меню) без пересоздания самих drawable-объектов.
+     */
+    public void setGlassColorProvider(BlurredBackgroundColorProvider colorProvider) {
+        if (colorProvider == null) {
+            return;
+        }
+        glassColorProvider = colorProvider;
+        if (glassDrawable != null) {
+            glassDrawable.setColorProvider(colorProvider);
+        }
+        if (glassDrawableBack != null) {
+            glassDrawableBack.setColorProvider(colorProvider);
+        }
+        if (glassDrawableMenu != null) {
+            glassDrawableMenu.setColorProvider(colorProvider);
+        }
+        invalidate();
+    }
+
     public void setGlassAvatarCorners(int corners) {
         if (glassAvatarCorners == corners) {
             return;

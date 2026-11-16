@@ -52,6 +52,7 @@ import android.graphics.PixelFormat;
 import android.graphics.Point;
 import android.graphics.PorterDuff;
 import android.graphics.PorterDuffColorFilter;
+import android.graphics.PorterDuffXfermode;
 import android.graphics.RadialGradient;
 import android.graphics.Rect;
 import android.graphics.RectF;
@@ -1245,6 +1246,9 @@ public class ProfileActivity extends BaseFragment implements NotificationCenter.
         public TopView(Context context) {
             super(context);
             setWillNotDraw(false);
+            // Свечение аватарки и переход шапки в тело профиля не должны обрезаться по краям.
+            setClipChildren(false);
+            setClipToPadding(false);
         }
 
         @Override
@@ -1275,14 +1279,23 @@ public class ProfileActivity extends BaseFragment implements NotificationCenter.
         private PakoogramAvatarPalette.PaletteData pakoogramPalette;
         private final Paint pakoogramHeaderPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
         private final Paint pakoogramGlowPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Paint pakoogramGlowFadePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final PorterDuffXfermode pakoogramGlowFadeXfermode = new PorterDuffXfermode(PorterDuff.Mode.DST_IN);
+        private final Paint pakoogramHeaderFadePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
         private final RectF pakoogramAvatarRect = new RectF();
         private RadialGradient pakoogramGlowGradient;
         private RadialGradient pakoogramGlowCoreGradient;
+        private LinearGradient pakoogramGlowFadeGradient;
+        private LinearGradient pakoogramHeaderFadeGradient;
         private int pakoogramGlowColor;
         private float pakoogramGlowRadius = -1f;
         private float pakoogramGlowCx, pakoogramGlowCy;
         private float pakoogramGlowStrength = -1f;
         private int pakoogramHeaderShaderHeight = -1;
+        private boolean pakoogramHeaderShaderDark;
+        private float pakoogramGlowFadeTop = -1f, pakoogramGlowFadeBottom = -1f;
+        private float pakoogramHeaderFadeTop = -1f, pakoogramHeaderFadeBottom = -1f;
+        private int pakoogramHeaderFadeColor;
 
         public void setPakoogramPalette(PakoogramAvatarPalette.PaletteData palette) {
             if (pakoogramPalette == palette) {
@@ -1292,6 +1305,8 @@ public class ProfileActivity extends BaseFragment implements NotificationCenter.
             pakoogramHeaderShaderHeight = -1;
             pakoogramGlowGradient = null;
             pakoogramGlowCoreGradient = null;
+            pakoogramGlowFadeGradient = null;
+            pakoogramHeaderFadeGradient = null;
             invalidate();
         }
 
@@ -1299,14 +1314,49 @@ public class ProfileActivity extends BaseFragment implements NotificationCenter.
             if (pakoogramPalette == null || height <= 0) {
                 return;
             }
-            if (pakoogramHeaderPaint.getShader() != null && pakoogramHeaderShaderHeight == height) {
+            final boolean dark = Theme.isCurrentThemeDark();
+            if (pakoogramHeaderPaint.getShader() != null && pakoogramHeaderShaderHeight == height
+                    && pakoogramHeaderShaderDark == dark) {
                 return;
             }
             pakoogramHeaderShaderHeight = height;
+            pakoogramHeaderShaderDark = dark;
             pakoogramHeaderPaint.setShader(new LinearGradient(0, 0, 0, height,
                     pakoogramPalette.getHeaderGradientTop(),
                     pakoogramPalette.getHeaderGradientBottom(),
                     Shader.TileMode.CLAMP));
+        }
+
+        /**
+         * Мягкий вертикальный переход от шапки к телу профиля: вместо резкой
+         * горизонтальной границы цвет шапки плавно растворяется в фоне списка.
+         */
+        private void drawPakoogramHeaderTransition(Canvas canvas, int headerBottom) {
+            final PakoogramAvatarPalette.PaletteData palette = pakoogramPalette;
+            if (palette == null || headerBottom <= 0) {
+                return;
+            }
+            final int bottom = (int) Math.min(getMeasuredHeight(), headerBottom + dp(72));
+            if (bottom <= headerBottom) {
+                return;
+            }
+            final int color = palette.getHeaderGradientBottom();
+            if (pakoogramHeaderFadeGradient == null || pakoogramHeaderFadeTop != headerBottom
+                    || pakoogramHeaderFadeBottom != bottom || pakoogramHeaderFadeColor != color) {
+                pakoogramHeaderFadeTop = headerBottom;
+                pakoogramHeaderFadeBottom = bottom;
+                pakoogramHeaderFadeColor = color;
+                pakoogramHeaderFadeGradient = new LinearGradient(0, headerBottom, 0, bottom,
+                        new int[]{
+                                ColorUtils.setAlphaComponent(color, 0xE6),
+                                ColorUtils.setAlphaComponent(color, 0x66),
+                                ColorUtils.setAlphaComponent(color, 0)
+                        },
+                        new float[]{0f, 0.45f, 1f}, Shader.TileMode.CLAMP);
+            }
+            pakoogramHeaderFadePaint.setShader(pakoogramHeaderFadeGradient);
+            canvas.drawRect(0, headerBottom, getMeasuredWidth(), bottom, pakoogramHeaderFadePaint);
+            pakoogramHeaderFadePaint.setShader(null);
         }
 
         /** Рисует мягкий ореол в доминирующем цвете аватарки: два слоя радиального градиента. */
@@ -1359,12 +1409,33 @@ public class ProfileActivity extends BaseFragment implements NotificationCenter.
                         new float[]{0f, 0.65f, 1f}, Shader.TileMode.CLAMP);
             }
             final int saveCount = canvas.save();
-            canvas.clipRect(0, 0, getMeasuredWidth(), clipBottom);
-            pakoogramGlowPaint.setShader(pakoogramGlowGradient);
-            canvas.drawCircle(cx, cy, radius, pakoogramGlowPaint);
-            pakoogramGlowPaint.setShader(pakoogramGlowCoreGradient);
-            canvas.drawCircle(cx, cy, coreRadius, pakoogramGlowPaint);
-            pakoogramGlowPaint.setShader(null);
+            // Свечение не обрезается резко по нижней границе шапки: оно мягко
+            // затухает вниз по вертикальному градиенту-маске.
+            final float fadeEnd = clipBottom + dp(64);
+            final int layerTop = (int) Math.max(0, Math.min(clipBottom, cy - radius));
+            final int layerBottom = (int) Math.min(getMeasuredHeight(), Math.max(fadeEnd, cy + radius));
+            if (layerBottom > layerTop) {
+                final int layer = canvas.saveLayer(0, layerTop, getMeasuredWidth(), layerBottom, null, Canvas.ALL_SAVE_FLAG);
+                pakoogramGlowPaint.setShader(pakoogramGlowGradient);
+                canvas.drawCircle(cx, cy, radius, pakoogramGlowPaint);
+                pakoogramGlowPaint.setShader(pakoogramGlowCoreGradient);
+                canvas.drawCircle(cx, cy, coreRadius, pakoogramGlowPaint);
+                pakoogramGlowPaint.setShader(null);
+
+                if (pakoogramGlowFadeGradient == null || pakoogramGlowFadeTop != clipBottom
+                        || pakoogramGlowFadeBottom != fadeEnd) {
+                    pakoogramGlowFadeTop = clipBottom;
+                    pakoogramGlowFadeBottom = fadeEnd;
+                    pakoogramGlowFadeGradient = new LinearGradient(0, clipBottom, 0, fadeEnd,
+                            new int[]{0xFFFFFFFF, 0xFFFFFFFF, 0},
+                            new float[]{0f, 0.4f, 1f}, Shader.TileMode.CLAMP);
+                }
+                pakoogramGlowFadePaint.setShader(pakoogramGlowFadeGradient);
+                pakoogramGlowFadePaint.setXfermode(pakoogramGlowFadeXfermode);
+                canvas.drawRect(0, layerTop, getMeasuredWidth(), layerBottom, pakoogramGlowFadePaint);
+                pakoogramGlowFadePaint.setXfermode(null);
+                canvas.restoreToCount(layer);
+            }
             canvas.restoreToCount(saveCount);
         }
 
@@ -1509,6 +1580,8 @@ public class ProfileActivity extends BaseFragment implements NotificationCenter.
                     canvas.drawRect(0, 0, getMeasuredWidth(), y1, pakoogramHeaderPaint);
                 }
                 drawPakoogramAvatarGlow(canvas, y1);
+                // Мягкий переход шапки в тело профиля вместо резкой горизонтальной границы.
+                drawPakoogramHeaderTransition(canvas, y1);
                 if (hasEmoji && !capturing) {
                     final float loadedScale = emojiLoadedT.set(isEmojiLoaded());
                     boolean shoudIgnore = openAnimationInProgress && playProfileAnimation == 2;
@@ -3780,6 +3853,13 @@ public class ProfileActivity extends BaseFragment implements NotificationCenter.
         } else if (users != null) {
             initialTab = SharedMediaLayout.TAB_GROUPUSERS;
         }
+        // Pakoogram: провайдер палитры нужен ещё до создания шапки и панели вкладок —
+        // иначе нижняя часть профиля (вкладки, сетка подарков/медиа, кнопка подарка)
+        // осталась бы в стандартных цветах темы.
+        if (PakoogramConfig.isAdaptiveChatThemeEnabled()) {
+            pakoogramResourcesProvider = new PakoogramAvatarPalette.ThemedResourcesProvider(resourcesProvider);
+            resourcesProvider = pakoogramResourcesProvider;
+        }
         createHeaderBar(context);
         sharedMediaLayout = new SharedMediaLayout(context, did, sharedMediaPreloader, userInfo != null ? userInfo.common_chats_count : 0, sortedUsers, chatInfo, userInfo, initialTab, initialStoryAlbum, this, this, SharedMediaLayout.VIEW_TYPE_PROFILE_ACTIVITY, resourcesProvider, getBaseSimpleGlass().factory) {
             @Override
@@ -4184,9 +4264,7 @@ public class ProfileActivity extends BaseFragment implements NotificationCenter.
         avatarDrawable.setProfile(true);
         // Pakoogram: палитра аватарки и адаптивные фоны профиля.
         if (PakoogramConfig.isAdaptiveChatThemeEnabled()) {
-            pakoogramResourcesProvider = new PakoogramAvatarPalette.ThemedResourcesProvider(resourcesProvider);
             refreshPakoogramPalette();
-            resourcesProvider = pakoogramResourcesProvider;
         }
         listAdapter = new ListAdapter(context);
         searchAdapter = new SearchAdapter(this, context);
@@ -10822,7 +10900,7 @@ public class ProfileActivity extends BaseFragment implements NotificationCenter.
         }
     }
 
-    /** Pakoogram: тонирует фон экрана, карточки разделов и шапку профиля. */
+    /** Pakoogram: тонирует фон экрана, карточки разделов, шапку и низ профиля. */
     private void applyPakoogramProfilePalette() {
         if (!PakoogramConfig.isAdaptiveChatThemeEnabled() || pakoogramPalette == null) {
             return;
@@ -10845,8 +10923,52 @@ public class ProfileActivity extends BaseFragment implements NotificationCenter.
             actionBar.setBackgroundColor(ColorUtils.setAlphaComponent(
                     pakoogramPalette.getGlassPanelColor(dark), 0x33));
         }
+        // Нижняя часть экрана: панель вкладок «Подарки / Медиа / Избранное»,
+        // её активный индикатор, фон сетки подарков/медиа и плавающая кнопка подарка.
+        applyPakoogramBottomPalette(dark);
         if (listAdapter != null) {
             listAdapter.notifyDataSetChanged();
+        }
+    }
+
+    /**
+     * Pakoogram: перекрашивает низ профиля в оттенки текущей палитры аватарки.
+     *
+     * <p>Панель вкладок ({@link SharedMediaLayout}) и её активный индикатор берут
+     * цвета из провайдера ресурсов профиля, поэтому достаточно обновить их цвета;
+     * сетка медиа/подарков и плавающая кнопка «Отправить подарок» также получают
+     * оттенок и акцент палитры.</p>
+     */
+    private void applyPakoogramBottomPalette(boolean dark) {
+        final PakoogramAvatarPalette.PaletteData palette = pakoogramPalette;
+        if (palette == null) {
+            return;
+        }
+        try {
+            if (sharedMediaLayout != null) {
+                sharedMediaLayout.updateColors();
+                if (sharedMediaLayout.scrollSlidingTextTabStrip != null) {
+                    sharedMediaLayout.scrollSlidingTextTabStrip.updateColors();
+                    sharedMediaLayout.scrollSlidingTextTabStrip.invalidate();
+                }
+                if (sharedMediaLayout.giftsContainer != null) {
+                    sharedMediaLayout.giftsContainer.updateColors();
+                }
+                final RecyclerListView mediaList = sharedMediaLayout.getCurrentListView();
+                if (mediaList != null) {
+                    if (sharedMediaLayout.getSelectedTab() != SharedMediaLayout.TAB_SAVED_MESSAGES) {
+                        mediaList.setBackgroundColor(palette.getProfileBackgroundColor(dark));
+                    }
+                    mediaList.invalidateViews();
+                    mediaList.invalidate();
+                }
+                sharedMediaLayout.invalidate();
+            }
+            if (giftsView != null) {
+                giftsView.update();
+            }
+        } catch (Exception e) {
+            FileLog.e(e);
         }
     }
 

@@ -557,8 +557,13 @@ public class DialogCell extends BaseCell implements StoriesListPlaceProvider.Ava
     private static final int PAKOGRAM_CARD_GRADIENT_START_ALPHA = 0x59;   // ~35%
     private static final int PAKOGRAM_CARD_GRADIENT_MIDDLE_ALPHA = 0x29;  // ~16%
     private static final int PAKOGRAM_CARD_GRADIENT_END_ALPHA = 0x0F;     // ~6%
+    // В тёмной теме карточки «сочнее»: больше цвета и ярче блик по контуру.
+    private static final int PAKOGRAM_CARD_GRADIENT_START_ALPHA_DARK = 0x78;   // ~47%
+    private static final int PAKOGRAM_CARD_GRADIENT_MIDDLE_ALPHA_DARK = 0x3D;  // ~24%
+    private static final int PAKOGRAM_CARD_GRADIENT_END_ALPHA_DARK = 0x18;     // ~9%
     private static final int PAKOGRAM_CARD_STROKE_START_COLOR = 0x38FFFFFF; // ~22% белого
     private static final int PAKOGRAM_CARD_STROKE_END_COLOR = 0x00FFFFFF;
+    private static final int PAKOGRAM_CARD_STROKE_START_ALPHA_DARK = 0x59;  // ~35% тонированного блика
 
     private final Paint pakoogramCardPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint pakoogramCardGradientPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
@@ -571,6 +576,7 @@ public class DialogCell extends BaseCell implements StoriesListPlaceProvider.Ava
     private int pakoogramCardGradientHeight = -1;
     private int pakoogramCardGradientIntensity = -1;
     private float pakoogramCardGradientRadius = -1f;
+    private boolean pakoogramCardGradientDark;
     private boolean animatingArchiveAvatar;
     private float animatingArchiveAvatarProgress;
     private BounceInterpolator interpolator = new BounceInterpolator();
@@ -3918,21 +3924,26 @@ public class DialogCell extends BaseCell implements StoriesListPlaceProvider.Ava
      * <p>Цвет берётся из общего кэша {@link PakoogramAvatarPalette} по {@code dialog_id}:
      * доминирующий цвет реального битмапа аватарки → цвет векторной аватарки → цвет
      * автоматически сгенерированной аватарки ({@link AvatarDrawable}) → цвет имени из
-     * текущей темы. Благодаря общему кэшу список чатов, переписка и профиль используют
-     * один и тот же цвет и не пересчитывают пиксели на каждом кадре.</p>
+     * текущей темы. В тёмной теме для карточки используется яркий акцент палитры
+     * (карточки получаются сочнее), в светлой — воздушный пастельный оттенок, чтобы
+     * стекло оставалось лёгким. Благодаря общему кэшу список чатов, переписка и
+     * профиль используют один и тот же цвет и не пересчитывают пиксели на каждом кадре.</p>
      */
     private int getPakoogramTintColor() {
         final PakoogramAvatarPalette.PaletteData palette =
                 PakoogramAvatarPalette.getOrCreate(currentDialogId, avatarImage, avatarDrawable);
-        if (palette != null && palette.getDominantColor() != 0) {
-            return palette.getDominantColor();
+        if (palette != null) {
+            // Тёмная тема — сочный акцент аватарки, светлая — воздушный пастельный оттенок.
+            return Theme.isCurrentThemeDark()
+                    ? palette.getAccentColor()
+                    : palette.getProfileCardColor(false);
         }
         return Theme.getColor(Theme.key_chats_name, resourcesProvider);
     }
 
-    /** Pakoogram: пересоздаёт шейдеры карточки, если изменился цвет, размер или настройки. */
+    /** Pakoogram: пересоздаёт шейдеры карточки, если изменился цвет, размер, тема или настройки. */
     @SuppressLint("DrawAllocation")
-    private void ensurePakoogramCardShaders(int color, int intensity, float radius) {
+    private void ensurePakoogramCardShaders(int color, int intensity, float radius, boolean dark) {
         final int width = Math.round(pakoogramCardRect.width());
         final int height = Math.round(pakoogramCardRect.height());
         if (pakoogramCardGradient != null
@@ -3940,7 +3951,8 @@ public class DialogCell extends BaseCell implements StoriesListPlaceProvider.Ava
                 && pakoogramCardGradientWidth == width
                 && pakoogramCardGradientHeight == height
                 && pakoogramCardGradientIntensity == intensity
-                && pakoogramCardGradientRadius == radius) {
+                && pakoogramCardGradientRadius == radius
+                && pakoogramCardGradientDark == dark) {
             return;
         }
         pakoogramCardGradientColor = color;
@@ -3948,18 +3960,22 @@ public class DialogCell extends BaseCell implements StoriesListPlaceProvider.Ava
         pakoogramCardGradientHeight = height;
         pakoogramCardGradientIntensity = intensity;
         pakoogramCardGradientRadius = radius;
+        pakoogramCardGradientDark = dark;
 
         final float factor = Math.max(0f, Math.min(1f, intensity / 100f));
         final int red = Color.red(color);
         final int green = Color.green(color);
         final int blue = Color.blue(color);
+        final int startAlpha = dark ? PAKOGRAM_CARD_GRADIENT_START_ALPHA_DARK : PAKOGRAM_CARD_GRADIENT_START_ALPHA;
+        final int middleAlpha = dark ? PAKOGRAM_CARD_GRADIENT_MIDDLE_ALPHA_DARK : PAKOGRAM_CARD_GRADIENT_MIDDLE_ALPHA;
+        final int endAlpha = dark ? PAKOGRAM_CARD_GRADIENT_END_ALPHA_DARK : PAKOGRAM_CARD_GRADIENT_END_ALPHA;
         pakoogramCardGradient = new LinearGradient(
                 pakoogramCardRect.left, pakoogramCardRect.centerY(),
                 pakoogramCardRect.right, pakoogramCardRect.centerY(),
                 new int[]{
-                        Color.argb(Math.round(PAKOGRAM_CARD_GRADIENT_START_ALPHA * factor), red, green, blue),
-                        Color.argb(Math.round(PAKOGRAM_CARD_GRADIENT_MIDDLE_ALPHA * factor), red, green, blue),
-                        Color.argb(Math.round(PAKOGRAM_CARD_GRADIENT_END_ALPHA * factor), red, green, blue)
+                        Color.argb(Math.round(startAlpha * factor), red, green, blue),
+                        Color.argb(Math.round(middleAlpha * factor), red, green, blue),
+                        Color.argb(Math.round(endAlpha * factor), red, green, blue)
                 },
                 new float[]{0f, 0.5f, 1f},
                 Shader.TileMode.CLAMP);
@@ -3967,10 +3983,16 @@ public class DialogCell extends BaseCell implements StoriesListPlaceProvider.Ava
 
         pakoogramCardStrokePaint.setStyle(Paint.Style.STROKE);
         pakoogramCardStrokePaint.setStrokeWidth(Math.max(1f, dpf2(PAKOGRAM_CARD_STROKE_WIDTH)));
+        // В тёмной теме блик по контуру тоже тонируется цветом аватарки — стекло «сочнее».
+        final int strokeStart = dark
+                ? ColorUtils.setAlphaComponent(
+                        ColorUtils.blendARGB(color, Color.WHITE, 0.55f),
+                        PAKOGRAM_CARD_STROKE_START_ALPHA_DARK)
+                : PAKOGRAM_CARD_STROKE_START_COLOR;
         pakoogramCardStrokePaint.setShader(new LinearGradient(
                 pakoogramCardRect.left, pakoogramCardRect.top,
                 pakoogramCardRect.right, pakoogramCardRect.bottom,
-                new int[]{PAKOGRAM_CARD_STROKE_START_COLOR, PAKOGRAM_CARD_STROKE_END_COLOR},
+                new int[]{strokeStart, PAKOGRAM_CARD_STROKE_END_COLOR},
                 new float[]{0f, 1f},
                 Shader.TileMode.CLAMP));
     }
@@ -4002,13 +4024,14 @@ public class DialogCell extends BaseCell implements StoriesListPlaceProvider.Ava
         final float radius = Math.min(dp(PakoogramConfig.getChatCardCornerRadius()),
                 Math.min(pakoogramCardRect.width(), pakoogramCardRect.height()) / 2f);
         final int intensity = PakoogramConfig.getChatCardGradientIntensity();
-        ensurePakoogramCardShaders(color, intensity, radius);
+        final boolean dark = Theme.isCurrentThemeDark();
+        ensurePakoogramCardShaders(color, intensity, radius, dark);
 
         // 1. Матовая полупрозрачная подложка карточки.
         pakoogramCardPaint.setShader(null);
         pakoogramCardPaint.setStyle(Paint.Style.FILL);
         pakoogramCardPaint.setColor(Theme.getColor(Theme.key_windowBackgroundWhite, resourcesProvider));
-        pakoogramCardPaint.setAlpha(PAKOGRAM_CARD_BACKGROUND_ALPHA);
+        pakoogramCardPaint.setAlpha(dark ? PAKOGRAM_CARD_BACKGROUND_ALPHA : 0x4D);
         canvas.drawRoundRect(pakoogramCardRect, radius, radius, pakoogramCardPaint);
 
         // 2. Горизонтальный многоступенчатый градиент цвета аватарки.

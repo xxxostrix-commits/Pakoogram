@@ -2314,7 +2314,12 @@ public class ChatActivityEnterView extends FrameLayout implements
                 circleAlpha *= (1f - (slideToCancelProgress - 0.7f) / 0.3f);
             }
 
-            if (progressToSeekbarStep3 > 0) {
+            if (pakoogramAccentColor != 0) {
+                // Pakoogram: круглая кнопка микрофона окрашена акцентом палитры аватарки.
+                paint.setColor(progressToSeekbarStep3 > 0
+                        ? ColorUtils.blendARGB(pakoogramAccentColor, getThemedColor(Theme.key_chat_recordedVoiceBackground), progressToSeekbarStep3)
+                        : pakoogramAccentColor);
+            } else if (progressToSeekbarStep3 > 0) {
                 paint.setColor(ColorUtils.blendARGB(getThemedColor(Theme.key_chat_messagePanelVoiceBackground), getThemedColor(Theme.key_chat_recordedVoiceBackground), progressToSeekbarStep3));
             } else {
                 paint.setColor(getThemedColor(Theme.key_chat_messagePanelVoiceBackground));
@@ -2535,9 +2540,12 @@ public class ChatActivityEnterView extends FrameLayout implements
         }
 
         public void updateColors() {
-            paint.setColor(getThemedColor(Theme.key_chat_messagePanelVoiceBackground));
-            tinyWaveDrawable.paint.setColor(ColorUtils.setAlphaComponent(getThemedColor(Theme.key_chat_messagePanelVoiceBackground), (int) (255 * WaveDrawable.CIRCLE_ALPHA_2)));
-            bigWaveDrawable.paint.setColor(ColorUtils.setAlphaComponent(getThemedColor(Theme.key_chat_messagePanelVoiceBackground), (int) (255 * WaveDrawable.CIRCLE_ALPHA_1)));
+            final int voiceColor = pakoogramAccentColor != 0
+                    ? pakoogramAccentColor
+                    : getThemedColor(Theme.key_chat_messagePanelVoiceBackground);
+            paint.setColor(voiceColor);
+            tinyWaveDrawable.paint.setColor(ColorUtils.setAlphaComponent(voiceColor, (int) (255 * WaveDrawable.CIRCLE_ALPHA_2)));
+            bigWaveDrawable.paint.setColor(ColorUtils.setAlphaComponent(voiceColor, (int) (255 * WaveDrawable.CIRCLE_ALPHA_1)));
 
             paintAlpha = paint.getAlpha();
         }
@@ -4879,6 +4887,8 @@ public class ChatActivityEnterView extends FrameLayout implements
     // Pakoogram: оттенок матового стекла нижней панели ввода.
     private int pakoogramPanelTintColor;
     private float pakoogramPanelTintStrength;
+    // Pakoogram: яркий акцент палитры аватарки для круглых кнопок и акцентных иконок.
+    private int pakoogramAccentColor;
 
     /**
      * Pakoogram: задаёт оттенок стеклянной панели ввода из палитры аватарки.
@@ -4894,6 +4904,45 @@ public class ChatActivityEnterView extends FrameLayout implements
         pakoogramPanelTintColor = color;
         pakoogramPanelTintStrength = clamped;
         invalidate();
+    }
+
+    /**
+     * Pakoogram: перекрашивает акцентные элементы панели ввода (круглая кнопка
+     * микрофона/отправки, кнопка меню бота, микрофон во время записи) в цвет
+     * палитры аватарки вместо стандартного синего.
+     *
+     * @param color цвет акцента без обязательной альфы, {@code 0} — вернуть тему
+     */
+    public void setPakoogramAccentColor(int color) {
+        final int accent = color == 0 ? 0 : ColorUtils.setAlphaComponent(color, 255);
+        if (pakoogramAccentColor == accent) {
+            return;
+        }
+        pakoogramAccentColor = accent;
+        applyPakoogramAccent();
+        invalidate();
+    }
+
+    /** Применяет акцент палитры к иконкам и кнопкам, которые не перекрашиваются в onDraw. */
+    private void applyPakoogramAccent() {
+        if (botButtonDrawable != null) {
+            if (pakoogramAccentColor != 0) {
+                botButtonDrawable.setColorFilter(new PorterDuffColorFilter(pakoogramAccentColor, PorterDuff.Mode.MULTIPLY));
+            } else {
+                ThemeBind.drawableColorFilter(this, botButtonDrawable, Theme.key_glass_defaultIcon, resourcesProvider, PorterDuff.Mode.MULTIPLY);
+            }
+        }
+        if (recordCircle != null) {
+            recordCircle.updateColors();
+        }
+        if (sendButton != null) {
+            sendButton.setPakoogramAccent(pakoogramAccentColor);
+            sendButton.updateColors();
+            sendButton.invalidate();
+        }
+        if (audioVideoSendButton != null) {
+            audioVideoSendButton.invalidate();
+        }
     }
 
     private float composeShadowAlpha = 1f;
@@ -10833,6 +10882,7 @@ public class ChatActivityEnterView extends FrameLayout implements
 
     @Override
     public void updateColors() {
+        applyPakoogramAccent();
         updateColorsExtra();
         if (messageSendPreview != null) {
             messageSendPreview.updateColors();
@@ -16052,12 +16102,32 @@ public class ChatActivityEnterView extends FrameLayout implements
         }
 
         private int drawableColor, inactiveDrawableColor, drawableInverseColor;
+        private int pakoogramAccentColor;
+        private int lastPakoogramAccentColor;
+
+        /**
+         * Pakoogram: красит круглую кнопку отправки в акцент палитры аватарки.
+         *
+         * @param color цвет без обязательной альфы, {@code 0} — вернуть цвет темы
+         */
+        public void setPakoogramAccent(int color) {
+            final int accent = color == 0 ? 0 : ColorUtils.setAlphaComponent(color, 255);
+            if (pakoogramAccentColor != accent) {
+                pakoogramAccentColor = accent;
+                invalidate();
+            }
+        }
 
         public void updateColors() {
+            final int fill = pakoogramAccentColor != 0
+                    ? pakoogramAccentColor
+                    : Theme.getColor(Theme.key_chat_messagePanelSend, resourcesProvider);
             int color = isNewDesignSendButton ? Color.WHITE : Theme.getColor(Theme.key_chat_messagePanelSend, resourcesProvider);
             int c = Theme.getColor(Theme.key_glass_defaultIcon, resourcesProvider);
             int inverseColor = Theme.getColor(Theme.key_chat_messagePanelVoicePressed, resourcesProvider);
-            if (color != drawableColor || c != inactiveDrawableColor || inverseColor != drawableInverseColor) {
+            if (color != drawableColor || c != inactiveDrawableColor || inverseColor != drawableInverseColor
+                    || pakoogramAccentColor != lastPakoogramAccentColor) {
+                lastPakoogramAccentColor = pakoogramAccentColor;
                 drawableColor = color;
                 inactiveDrawableColor = c;
                 drawableInverseColor = inverseColor;
@@ -16066,9 +16136,9 @@ public class ChatActivityEnterView extends FrameLayout implements
                 drawableInverse.setColorFilter(new PorterDuffColorFilter(inverseColor, PorterDuff.Mode.SRC_IN));
             }
             if (isNewDesignSendButton) {
-                backgroundPaint.setColor(Theme.getColor(Theme.key_chat_messagePanelSend, resourcesProvider));
+                backgroundPaint.setColor(fill);
             } else if (shouldDrawBackground()) {
-                backgroundPaint.setColor(getFillColor());
+                backgroundPaint.setColor(pakoogramAccentColor != 0 ? pakoogramAccentColor : getFillColor());
             } else {
                 backgroundPaint.setColor(ColorUtils.setAlphaComponent(Color.WHITE, 75));
             }
