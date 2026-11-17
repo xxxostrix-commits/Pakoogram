@@ -1175,6 +1175,9 @@ public class ActionBarLayout extends FrameLayout implements INavigationLayout, F
 
     @Override
     protected void dispatchDraw(@NonNull Canvas canvas) {
+        // Pakoogram: в этом кадре плашка-капсула должна быть нарисована ровно один раз —
+        // между нижним и передним контейнерами перехода (см. drawChild).
+        PakoogramAnimations.beginMorphOverlayFrame();
         if (bottomSheetTabs != null && getBottomTabsHeight(true) > 0) {
             canvas.drawRect(0, getHeight() - (systemAndDisplayInsets.bottom + bottomSheetTabs.getMeasuredHeight()),
                     getWidth(), getHeight(), bottomSheetTabs.getBackgroundPaint());
@@ -1190,6 +1193,12 @@ public class ActionBarLayout extends FrameLayout implements INavigationLayout, F
             canvas.clipPath(clipPath);
         }
         super.dispatchDraw(canvas);
+        // Страховка: если передний контейнер почему-то не был отрисован через drawChild,
+        // плашка всё равно попадёт в кадр. Обычно здесь она уже нарисована и вызов пустой.
+        // Рисуем до restore(), чтобы в режиме layers плашка осталась внутри скруглённого окна.
+        if (PakoogramAnimations.isMorphOverlayVisible()) {
+            PakoogramAnimations.drawMorphOverlay(canvas);
+        }
         if (isLayersLayout) {
             canvas.restore();
         }
@@ -1200,6 +1209,12 @@ public class ActionBarLayout extends FrameLayout implements INavigationLayout, F
 
     @Override
     protected boolean drawChild(Canvas canvas, View child, long drawingTime) {
+        // Pakoogram: плашка-капсула рисуется прямо перед передним контейнером перехода —
+        // поверх списка диалогов, но под содержимым чата. Сам ChatActivity при этом
+        // не обрезается и не масштабируется, поэтому альфа его содержимого видна корректно.
+        if (PakoogramAnimations.isMorphFrontContainer(child)) {
+            PakoogramAnimations.drawMorphOverlay(canvas);
+        }
         if (drawerLayoutContainer != null && drawerLayoutContainer.isDrawCurrentPreviewFragmentAbove()) {
             if (inPreviewMode || transitionAnimationPreviewMode || previewOpenAnimationInProgress) {
                 if (child == (oldFragment != null && oldFragment.inPreviewMode ? containerViewBack : containerView)) {
@@ -1720,6 +1735,42 @@ public class ActionBarLayout extends FrameLayout implements INavigationLayout, F
         if (currentFragment == null) return;
 
         float x = containerView.getX();
+        // Pakoogram: завершение свайпа назад ведёт тот же морфинг плашки, что и обычное
+        // закрытие чата. Экран не сдвигается дальше за край: его содержимое быстро
+        // растворяется, а скруглённая плашка сжимается обратно в карточку списка.
+        final BaseFragment previousSwipeFragment = fragmentsStack.size() >= 2
+                ? fragmentsStack.get(fragmentsStack.size() - 2)
+                : null;
+        if (!backAnimation && startedTracking && !predictiveBackInProgress
+                && previousSwipeFragment != null
+                && PakoogramAnimations.canAnimateTransition(currentFragment)) {
+            final AnimatorSet pakoogramMorph = PakoogramAnimations.animateScreenTransition(
+                    false, containerViewBack, containerView, previousSwipeFragment, currentFragment,
+                    () -> onSlideAnimationEnd(false), true);
+            if (pakoogramMorph != null) {
+                pakoogramMorphRunning = true;
+                pakoogramMorph.addListener(new AnimatorListenerAdapter() {
+                    @Override
+                    public void onAnimationCancel(Animator animation) {
+                        pakoogramMorphRunning = false;
+                        backAnimator = null;
+                        // Отмена возвращает чат на место: свайп считается несостоявшимся.
+                        onSlideAnimationEnd(true);
+                    }
+
+                    @Override
+                    public void onAnimationEnd(Animator animation) {
+                        pakoogramMorphRunning = false;
+                        backAnimator = null;
+                    }
+                });
+                backAnimator = pakoogramMorph;
+                backAnimatorIsBack = false;
+                animationInProgress = true;
+                layoutToIgnore = containerViewBack;
+                return;
+            }
+        }
         AnimatorSet animatorSet = new AnimatorSet();
         float distToMove;
         boolean overrideTransition = currentFragment.shouldOverrideSlideTransition(false, backAnimation);
@@ -1864,7 +1915,7 @@ public class ActionBarLayout extends FrameLayout implements INavigationLayout, F
      * <p>Штатный пошаговый аниматор этого класса ({@code animationRunnable} + {@code animationProgress})
      * каждый кадр переписывает {@code translationX}, {@code scaleX/Y} и {@code alpha} контейнеров,
      * поэтому при старте морфинга он отменяется и до конца перехода не перезапускается. Длительность
-     * задаёт сам {@link PakoogramAnimations}: 330 мс на открытие и 300 мс на закрытие, поделённые
+     * задаёт сам {@link PakoogramAnimations}: 320 мс на открытие и 290 мс на закрытие, поделённые
      * на множитель скорости из настроек. Открытие стартует после первой раскладки нового
      * фрагмента (см. {@code OnPreDraw} внутри движка), поэтому стандартный сдвиг
      * {@code translationX} Telegram для чата/профиля не применяется вовсе.</p>
@@ -1921,7 +1972,8 @@ public class ActionBarLayout extends FrameLayout implements INavigationLayout, F
 
     /**
      * Pakoogram: жёсткий сброс контейнера после морфинга — без остаточного кадра.
-     * Здесь явно снимаются обрезка по контуру, кастомный outline, масштаб, сдвиги и альфа.
+     * Масштаб, сдвиги и альфа возвращаются к исходным, плашка-оверлей выключается.
+     * Обрезка по контуру и кастомный outline больше не используются вовсе.
      */
     private static void resetPakoogramContainer(View container) {
         if (container == null) {
@@ -1933,9 +1985,6 @@ public class ActionBarLayout extends FrameLayout implements INavigationLayout, F
         container.setTranslationX(0f);
         container.setTranslationY(0f);
         container.setAlpha(1f);
-        container.setClipToOutline(false);
-        container.setOutlineProvider(ViewOutlineProvider.BACKGROUND);
-        container.invalidateOutline();
     }
 
     public BaseFragment getLastFragment() {
@@ -2023,8 +2072,8 @@ public class ActionBarLayout extends FrameLayout implements INavigationLayout, F
             animationProgress = 0.0f;
             lastFrameTime = System.nanoTime() / 1000000;
         }
-        // Pakoogram: при включённых ColorOS-переходах морфинг сам ведёт обрезку-капсулу, масштаб,
-        // альфу и скругление, поэтому штатный горизонтальный сдвиг Telegram (dp(48)) для чата и
+        // Pakoogram: при включённых ColorOS-переходах морфинг сам ведёт плашку-капсулу и альфу
+        // содержимого, поэтому штатный горизонтальный сдвиг Telegram (dp(48)) для чата и
         // профиля выключаем — иначе он перебивает морф-анимацию из PakoogramAnimations. Пока идёт
         // (или доигрывает) жест свайпа назад, сдвиг нужен самому жесту, поэтому его не трогаем.
         final boolean swipeBack = startedTracking || animationInProgress;
@@ -2032,8 +2081,8 @@ public class ActionBarLayout extends FrameLayout implements INavigationLayout, F
                 && (PakoogramAnimations.canAnimateTransition(newFragment) || PakoogramAnimations.canAnimateTransition(oldFragment));
         if (first && colorOsMorphWithoutSlide && !pakoogramMorphRunning) {
             // Pakoogram: переключатель «Анимации переходов ColorOS» включён и пользователь не тянет
-            // экран назад — переход ведёт исключительно PakoogramAnimations (330 мс открытие,
-            // 300 мс закрытие, оба делятся на множитель скорости). Штатный пошаговый аниматор
+            // экран назад — переход ведёт исключительно PakoogramAnimations (320 мс открытие,
+            // 290 мс закрытие, оба делятся на множитель скорости). Штатный пошаговый аниматор
             // в такой переход не вмешивается, иначе он перезаписывал бы translationX/scale/alpha.
             final AnimatorSet pakoogramAnimation = createPakoogramMorphAnimation(open);
             if (pakoogramAnimation != null) {

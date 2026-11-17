@@ -5,23 +5,25 @@ import android.animation.AnimatorListenerAdapter;
 import android.animation.AnimatorSet;
 import android.animation.TimeInterpolator;
 import android.animation.ValueAnimator;
-import android.graphics.Outline;
+import android.graphics.Canvas;
+import android.graphics.Paint;
 import android.graphics.RectF;
 import android.os.Build;
 import android.os.SystemClock;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
-import android.view.ViewOutlineProvider;
 import android.view.ViewParent;
 import android.view.ViewTreeObserver;
 import android.view.animation.DecelerateInterpolator;
+import android.view.animation.LinearInterpolator;
 import android.view.animation.OvershootInterpolator;
 import android.view.animation.PathInterpolator;
 
 import org.telegram.messenger.AndroidUtilities;
 import org.telegram.ui.ActionBar.ActionBarLayout;
 import org.telegram.ui.ActionBar.BaseFragment;
+import org.telegram.ui.ActionBar.Theme;
 import org.telegram.ui.Cells.DialogCell;
 import org.telegram.ui.Components.CubicBezierInterpolator;
 
@@ -40,8 +42,11 @@ import java.util.WeakHashMap;
  *     (внутренний прямоугольник со всеми боковыми отступами) строго в локальных координатах
  *     {@link ActionBarLayout}, её радиус и id диалога;</li>
  *     <li>{@link #animateScreenTransition(boolean, View, View, BaseFragment, BaseFragment, Runnable)} —
- *     морфинг экранов: окно обрезается по анимированному {@link ViewOutlineProvider} в границы
- *     карточки и одновременно масштабируется вокруг её центра, нижний слой уходит вглубь;</li>
+ *     морфинг «капсулы»: скруглённая плашка цвета фона чата раскрывается из карточки диалога
+ *     на весь экран, а сам {@code ChatActivity} не обрезается и не масштабируется — он лишь
+ *     плавно проявляется поверх плашки;</li>
+ *     <li>{@link #drawMorphOverlay(Canvas)} — отрисовка текущего кадра плашки-капсулы
+ *     поверх списка диалогов и под содержимым переднего экрана;</li>
  *     <li>{@link #attachSpringPress(View)} — пружинистое сжатие элемента при нажатии;</li>
  *     <li>{@link #resetScreenEffects(View)} — принудительный сброс эффектов перехода с контейнера.</li>
  * </ul>
@@ -59,20 +64,18 @@ public final class PakoogramAnimations {
 
     /* ------------------------------------------------------------ переходы экранов */
 
-    /** Масштаб нижнего слоя: во время перехода он слегка «уходит вглубь». */
-    private static final float BACK_LAYER_SCALE = 0.95f;
-    /** Прозрачность нижнего слоя в глубине — лёгкое затемнение вместо отдельной шторки. */
-    private static final float BACK_LAYER_ALPHA = 0.75f;
-    /** До этой доли пути при закрытии окно остаётся полностью непрозрачным. */
-    private static final float CLOSE_ALPHA_HOLD_PROGRESS = 0.65f;
-    /** Минимальный масштаб окна при сворачивании в карточку (даже на очень узких карточках). */
-    private static final float MIN_MORPH_SCALE = 0.72f;
+    /** Радиус плашки-капсулы в начале/конце морфинга, в dp. */
+    private static final int CAPSULE_CORNER_RADIUS_DP = 18;
+    /** С этой доли пути при открытии начинает проявляться содержимое чата. */
+    private static final float OPEN_CONTENT_ALPHA_START = 0.45f;
+    /** За эту долю пути при закрытии содержимое чата полностью растворяется. */
+    private static final float CLOSE_CONTENT_ALPHA_END = 0.35f;
+    /** С этой доли пути при закрытии плашка начинает мягко гаснуть поверх карточки. */
+    private static final float CLOSE_OVERLAY_ALPHA_END_START = 0.80f;
     /** Базовая длительность открытия до деления на множитель скорости из настроек. */
-    private static final long BASE_OPEN_DURATION = 330L;
+    private static final long BASE_OPEN_DURATION = 320L;
     /** Базовая длительность закрытия до деления на множитель скорости из настроек. */
-    private static final long BASE_CLOSE_DURATION = 300L;
-    /** Радиус «запасной» капсулы, если прямоугольник карточки так и не был запомнен. */
-    private static final int FALLBACK_CAPSULE_RADIUS_DP = 18;
+    private static final long BASE_CLOSE_DURATION = 290L;
     /** Размеры запасной капсулы в долях экрана — используется только как fallback. */
     private static final float FALLBACK_CAPSULE_WIDTH_RATIO = 0.55f;
     private static final float FALLBACK_CAPSULE_HEIGHT_RATIO = 0.22f;
@@ -92,13 +95,30 @@ public final class PakoogramAnimations {
     private static long capturedOriginTime;
     /** id чата, которому принадлежит капсула; {@code 0} — источник без привязки к диалогу. */
     private static long capturedDialogId;
-    /** Радиус скругления капсулы в пикселях. */
-    private static float capturedCornerRadius;
 
     /** Уже обработанные элементы: повторная привязка слушателя при переиспользовании ячейки не нужна. */
     private static final WeakHashMap<View, Boolean> springPressViews = new WeakHashMap<>();
-    /** Контейнеры, которые прямо сейчас обрезаются в капсулу. */
+    /** Контейнеры, которые прямо сейчас участвуют в морфинге. */
     private static final WeakHashMap<View, Boolean> morphingViews = new WeakHashMap<>();
+
+    /** Текущий кадр плашки-капсулы в локальных координатах {@link ActionBarLayout}. */
+    private static final RectF morphRect = new RectF();
+    private static float morphRadius;
+    private static float morphAlpha;
+    /** {@code true}, пока плашку нужно рисовать в {@code ActionBarLayout.drawChild}. */
+    private static boolean morphOverlayVisible;
+    /**
+     * Передний контейнер перехода. Плашка рисуется прямо перед ним: она оказывается
+     * поверх списка диалогов, но под содержимым чата, поэтому альфа чата видна корректно.
+     */
+    private static WeakReference<View> morphFrontView;
+    private static final Paint morphPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+    /**
+     * Плашка за кадр должна нарисоваться ровно один раз: обычно её рисует
+     * {@code ActionBarLayout.drawChild} перед передним контейнером, а вызов в конце
+     * {@code dispatchDraw} служит только страховкой.
+     */
+    private static boolean morphOverlayDrawnInFrame;
 
     private static TimeInterpolator colorOsInterpolator;
 
@@ -112,7 +132,7 @@ public final class PakoogramAnimations {
      * Запоминает точную «капсулу» нажатой карточки чата — внутренний прямоугольник,
      * ограниченный теми же боковыми отступами, что рисует {@link DialogCell}
      * ({@code PAKOGRAM_CARD_MARGIN_HORIZONTAL} / {@code PAKOGRAM_CARD_MARGIN_VERTICAL}),
-     * её радиус скругления из {@link PakoogramConfig} и id диалога.
+     * и id диалога.
      *
      * <p>Координаты считаются строго в локальном пространстве ближайшего
      * {@link ActionBarLayout}: {@code getLocationInWindow} карточки минус
@@ -121,8 +141,7 @@ public final class PakoogramAnimations {
      *
      * <p>Из этого прямоугольника затем раскрывается чат ({@code open == true}) и в него же
      * сворачивается при закрытии ({@code open == false}). Для не-карточек (аватарка/шапка
-     * профиля) берётся весь прямоугольник вида, а радиус — половина меньшей стороны,
-     * чтобы капсула выглядела круглой/вытянутой, как иконка на рабочем столе.</p>
+     * профиля) берётся весь прямоугольник вида.</p>
      *
      * @param view нажатый элемент; {@code null} или элемент без размеров сбрасывает запомненное значение
      */
@@ -158,7 +177,6 @@ public final class PakoogramAnimations {
         final float cardRight = cardLeft + view.getWidth();
         final float cardBottom = cardTop + view.getHeight();
         long dialogId = 0;
-        float cornerRadius;
         if (view instanceof DialogCell) {
             final DialogCell cell = (DialogCell) view;
             dialogId = cell.getDialogId();
@@ -170,12 +188,8 @@ public final class PakoogramAnimations {
                     cardTop + insetVertical,
                     cardRight - insetHorizontal,
                     cardBottom - insetVertical);
-            // Тот же радиус, что рисует сама карточка: иначе капсула морфинга не совпадёт с ней.
-            cornerRadius = Math.min(AndroidUtilities.dp(PakoogramConfig.getChatCardCornerRadius()),
-                    Math.min(capturedOrigin.width(), capturedOrigin.height()) / 2f);
         } else {
             capturedOrigin.set(cardLeft, cardTop, cardRight, cardBottom);
-            cornerRadius = Math.min(view.getWidth(), view.getHeight()) / 2f;
         }
         if (capturedOrigin.width() <= 0f || capturedOrigin.height() <= 0f) {
             clearOrigin();
@@ -183,7 +197,6 @@ public final class PakoogramAnimations {
         }
         capturedContainerView = originContainer != null ? new WeakReference<>(originContainer) : null;
         capturedDialogId = dialogId;
-        capturedCornerRadius = Math.max(0f, cornerRadius);
         hasCapturedOrigin = true;
         capturedOriginTime = SystemClock.uptimeMillis();
     }
@@ -208,7 +221,6 @@ public final class PakoogramAnimations {
     public static void clearOrigin() {
         hasCapturedOrigin = false;
         capturedDialogId = 0;
-        capturedCornerRadius = 0f;
         capturedContainerView = null;
     }
 
@@ -311,22 +323,20 @@ public final class PakoogramAnimations {
     }
 
     /**
-     * Создаёт и сразу запускает морфинг экранов «сворачивание приложения в капсулу».
+     * Создаёт и сразу запускает морфинг «капсулы» между списком диалогов и экраном чата.
      *
-     * <p>Переход описывается единым прогрессом {@code p}: {@code 0f} — полный экран,
-     * {@code 1f} — карточка. Рамка обрезки ({@code currentRect} в {@link ViewOutlineProvider})
-     * интерполируется от полного экрана {@code [0, 0, width, height]} до внутреннего
-     * прямоугольника карточки чата ({@link #captureOrigin(View)}), а радиус скругления —
-     * от {@code 0} до радиуса карточки. Одновременно всё окно масштабируется
-     * {@code 1.0f -> Math.max(ширина капсулы / ширина контейнера, 0.72f)} вокруг центра
-     * капсулы, поэтому шапка чата и переписка уменьшаются вместе с окном и не обрезаются
-     * краем рамки. Никаких ручных {@code translationX/Y} не используется — точку опоры
-     * задаёт сам контейнер.</p>
+     * <p>Сам экран чата не масштабируется и не обрезается: его {@code scaleX/Y} всегда
+     * остаются {@code 1.0f}. Вместо этого в {@link ActionBarLayout} рисуется скруглённая
+     * плашка цвета {@code Theme.key_windowBackgroundWhite}, прямоугольник которой
+     * интерполируется между полным экраном {@code [0, 0, width, height]} и внутренним
+     * прямоугольником карточки чата ({@link #captureOrigin(View)}), а радиус скругления —
+     * между {@code AndroidUtilities.dp(18)} и {@code 0f}.</p>
      *
-     * <p>Прозрачность: при открытии окно непрозрачно с первого кадра; при закрытии оно
-     * остаётся непрозрачным первые 65% пути и гаснет до {@code 0.0f} только на последних
-     * 35%, уже внутри карточки. Нижний слой уходит вглубь ({@code 0.95f}) и темнеет
-     * ({@code 0.75f}), а при закрытии возвращается обратно.</p>
+     * <p>При открытии плашка разжимается из карточки на весь экран, а содержимое чата
+     * проявляется поверх неё только во второй половине пути ({@code 0.45f..1f}), поэтому
+     * пустой экран и спиннер загрузки не мелькают. При закрытии содержимое чата гаснет
+     * за первые 35% пути, затем плашка сжимается обратно в карточку, а на последних 20%
+     * мягко растворяется уже поверх неё.</p>
      *
      * <p>Анимация открытия стартует только после первой раскладки нового фрагмента
      * (через {@code OnPreDraw}), чтобы шапка и переписка подтягивались уже из реальных
@@ -343,6 +353,17 @@ public final class PakoogramAnimations {
     public static AnimatorSet animateScreenTransition(final boolean open, final View incoming, final View outgoing,
                                                       final BaseFragment incomingFragment, final BaseFragment outgoingFragment,
                                                       final Runnable onEnd) {
+        return animateScreenTransition(open, incoming, outgoing, incomingFragment, outgoingFragment, onEnd, false);
+    }
+
+    /**
+     * Вариант перехода с поддержкой завершения свайпа назад: если {@code swipeBack == true},
+     * передний контейнер уже сдвинут вправо, поэтому его сдвиг сохраняется на время
+     * быстрого растворения содержимого и обнуляется только после того, как альфа станет нулевой.
+     */
+    public static AnimatorSet animateScreenTransition(final boolean open, final View incoming, final View outgoing,
+                                                      final BaseFragment incomingFragment, final BaseFragment outgoingFragment,
+                                                      final Runnable onEnd, final boolean swipeBack) {
         if (incoming == null || outgoing == null) {
             return null;
         }
@@ -354,57 +375,61 @@ public final class PakoogramAnimations {
             return null;
         }
 
-        // Запомненную цель достаём до сброса эффектов, а координаты меряем уже после него:
-        // остаточные scale/translation контейнера исказили бы getLocationInWindow.
+        // Запомненную цель достаём до сброса эффектов: остаточные translation контейнера
+        // исказили бы getLocationInWindow. Прямоугольник хранится в координатах ActionBarLayout,
+        // ровно там же, где drawMorphOverlay будет рисовать плашку.
         final RectF capturedTarget = resolveTargetRect(morphFragment, open);
         final boolean usedCapturedOrigin = capturedTarget != null;
-        final RectF fullRect = new RectF(0f, 0f, morphView.getWidth(), morphView.getHeight());
+        final RectF fullRect = new RectF();
         final RectF targetRect = new RectF();
-        final float targetRadius;
+        // Сдвиг, накопленный свайпом назад: возвращать его в 0 сразу нельзя, иначе экран
+        // прыгнет вбок в момент отпускания пальца.
+        final float swipeTranslation = swipeBack && !open ? morphView.getTranslationX() : 0f;
 
-        // Сброс возможных хвостов предыдущих переходов: дальше двигаем только обрезку,
-        // масштаб окна, альфу и нижний слой. Translation не трогаем вовсе — центр задаёт pivot.
+        // Сброс возможных хвостов предыдущих переходов. Экран чата после этого всегда
+        // стоит без масштаба, сдвигов и обрезки — морфится только нарисованная плашка.
         resetScreenEffects(incoming);
         resetScreenEffects(outgoing);
-
-        if (capturedTarget != null) {
-            toLocalRect(morphView, capturedTarget, targetRect);
-            // Тот же радиус, что у нарисованной карточки (включая пользовательский 0dp).
-            targetRadius = capturedCornerRadius;
-        } else {
-            fallbackCapsule(morphView, targetRect);
-            targetRadius = AndroidUtilities.dp(FALLBACK_CAPSULE_RADIUS_DP);
+        if (swipeTranslation != 0f) {
+            morphView.setTranslationX(swipeTranslation);
         }
-        // Точка опоры — центр капсулы: масштабируется всё окно вокруг неё, без translationX/Y,
-        // которые сбивали бы центр и давали сдвиг на высоту статус-бара.
-        morphView.setPivotX(targetRect.centerX());
-        morphView.setPivotY(targetRect.centerY());
-        final RectF frameRect = new RectF();
+
+        resolveMorphFullRect(morphView, fullRect);
+        if (capturedTarget != null) {
+            targetRect.set(capturedTarget);
+        } else {
+            fallbackCapsule(fullRect, targetRect);
+        }
+        final float targetRadius = Math.min(AndroidUtilities.dp(CAPSULE_CORNER_RADIUS_DP),
+                Math.min(targetRect.width(), targetRect.height()) / 2f);
 
         final long duration = getTransitionDuration(open);
 
         // Метка нужна уже во время первого кадра: LayoutContainer не рисует статичную тень шапки.
         morphingViews.put(morphView, Boolean.TRUE);
+        // Плашка рисуется в ActionBarLayout.drawChild прямо перед передним контейнером:
+        // над списком диалогов, но под содержимым чата.
+        morphFrontView = new WeakReference<>(morphView);
+        morphOverlayVisible = true;
 
-        // Первый кадр ставим сразу: при открытии окно уже плотно стоит в капсуле (alpha = 1),
-        // при закрытии — ещё полноэкранное, поэтому не мелькает необработанный кадр.
-        applyTransitionFrame(open, morphView, backView, fullRect, targetRect,
-                targetRadius, frameRect, open ? 1f : 0f);
+        // Первый кадр ставим сразу: при открытии плашка уже совпадает с карточкой,
+        // при закрытии — перекрывает весь экран, поэтому необработанный кадр не мелькает.
+        applyTransitionFrame(open, morphView, backView, fullRect, targetRect, targetRadius,
+                0f, swipeTranslation, swipeBack);
 
         final AnimatorSet animatorSet = new AnimatorSet();
         final ValueAnimator animator = ValueAnimator.ofFloat(0f, 1f);
         animator.setDuration(duration);
-        animator.setInterpolator(getColorOsInterpolator());
+        // Линейный ход времени: геометрию интерполируем отдельной кривой внутри кадра,
+        // а пороги прозрачности считаем по «сырому» прогрессу 0.45f / 0.35f / 0.80f.
+        animator.setInterpolator(new LinearInterpolator());
         animator.addUpdateListener(new ValueAnimator.AnimatorUpdateListener() {
             @Override
             public void onAnimationUpdate(ValueAnimator animation) {
                 final Object value = animation.getAnimatedValue();
                 final float progress = value instanceof Float ? clamp01((Float) value) : 0f;
-                // p: 0 — полный экран, 1 — карточка. При открытии время идёт 0 -> 1,
-                // поэтому путь к полному экрану — обратный.
-                final float p = open ? 1f - progress : progress;
                 applyTransitionFrame(open, morphView, backView, fullRect, targetRect,
-                        targetRadius, frameRect, p);
+                        targetRadius, progress, swipeTranslation, swipeBack);
                 if (incomingFragment != null) {
                     incomingFragment.onTransitionAnimationProgress(true, progress);
                 }
@@ -422,7 +447,7 @@ public final class PakoogramAnimations {
             @Override
             public void onAnimationCancel(Animator animation) {
                 wasCancelled = true;
-                // Отменённый переход тоже обязан оставить контейнеры «чистыми».
+                // Отменённый переход тоже обязан оставить контейнеры и плашку «чистыми».
                 resetEffects();
                 if (open) {
                     outgoing.setVisibility(View.GONE);
@@ -454,8 +479,9 @@ public final class PakoogramAnimations {
                     return;
                 }
                 effectsReset = true;
-                // Эффекты снимаются всегда: экран не должен остаться обрезанным, сжатым,
-                // сдвинутым, повёрнутым вокруг капсулы или прозрачным.
+                // Плашка выключается первой: после перехода на экране не должно остаться
+                // ни её кадра, ни сжатого/полупрозрачного/сдвинутого контейнера чата.
+                clearMorphOverlay();
                 resetScreenEffects(morphView);
                 resetScreenEffects(backView);
             }
@@ -471,78 +497,173 @@ public final class PakoogramAnimations {
     }
 
     /**
-     * Применяет один кадр перехода. Прогресс {@code p} единый для обоих направлений:
-     * {@code 0f} — полный экран, {@code 1f} — карточка. При открытии он идёт от {@code 1}
-     * к {@code 0}, при закрытии — от {@code 0} к {@code 1}, поэтому вся геометрия
-     * считается одной и той же формулой и кадры стыкуются без скачков.
+     * Применяет один кадр морфинга плашки.
      *
-     * @param open         направление перехода (влияет только на прозрачность)
-     * @param morphView    передний слой, который обрезается по контуру и масштабируется
-     * @param backView     нижний слой, уходящий вглубь
-     * @param fullRect     полный прямоугольник экрана в координатах {@code morphView}
-     * @param targetRect   прямоугольник капсулы в координатах {@code morphView}
-     * @param targetRadius радиус скругления капсулы
-     * @param frameRect    переиспользуемый буфер текущего прямоугольника обрезки
-     * @param progress     прогресс пути 0..1 (0 — полный экран, 1 — карточка)
+     * <p>{@code progress} — «сырой» линейный прогресс аниматора {@code 0..1}. Геометрия
+     * плашки интерполируется кривой {@link #getColorOsInterpolator()}, а прозрачности
+     * содержимого и самой плашки считаются по фиксированным порогам, чтобы фазы
+     * «проявление чата» и «растворение чата» начинались предсказуемо.</p>
+     *
+     * @param open         направление перехода
+     * @param morphView    передний слой (экран чата); только его alpha меняется
+     * @param backView     нижний слой (список диалогов); остаётся без масштаба и затемнения
+     * @param fullRect     полный прямоугольник экрана в координатах ActionBarLayout
+     * @param targetRect   прямоугольник карточки чата в координатах ActionBarLayout
+     * @param targetRadius радиус скругления карточки в пикселях
+     * @param progress     линейный прогресс аниматора 0..1
+     * @param swipeTranslation сдвиг, накопленный свайпом назад (0 для обычных переходов)
+     * @param swipeBack    {@code true}, если закрытие завершает жест свайпа назад
      */
     private static void applyTransitionFrame(boolean open, View morphView, View backView,
                                              RectF fullRect, RectF targetRect, float targetRadius,
-                                             RectF frameRect, float progress) {
-        final float p = clamp01(progress);
+                                             float progress, float swipeTranslation, boolean swipeBack) {
+        final float t = clamp01(progress);
+        final float geometry = getColorOsInterpolator().getInterpolation(t);
 
-        // 1. Рамка обрезки: настоящая обрезка окна от полного экрана до капсулы карточки,
-        //    радиус скругления растёт от 0 до радиуса карточки.
-        lerpRect(frameRect, fullRect, targetRect, p);
-        applyCapsuleClip(morphView, frameRect, targetRadius * p);
-
-        // 2. Масштаб всего окна вокруг центра капсулы (pivot задан один раз в
-        //    animateScreenTransition). Шапка и переписка уменьшаются вместе с окном,
-        //    поэтому не обрезаются краем сужающейся рамки. Никаких translationX/Y.
-        final float targetScale = Math.max(
-                targetRect.width() / Math.max(1f, fullRect.width()),
-                MIN_MORPH_SCALE);
-        final float scale = lerp(1f, targetScale, p);
-        morphView.setScaleX(scale);
-        morphView.setScaleY(scale);
-
-        // 3. Прозрачность. Открытие всегда плотное с первого кадра; закрытие остаётся
-        //    непрозрачным первые 65% пути и гаснет только на последних 35%, внутри карточки.
-        final float alpha;
+        // 1. Плашка: при открытии разжимается из карточки на весь экран, при закрытии —
+        //    сжимается обратно. Радиус идёт от dp(18) к 0 и наоборот.
         if (open) {
-            alpha = 1f;
-        } else if (p <= CLOSE_ALPHA_HOLD_PROGRESS) {
-            alpha = 1f;
+            lerpRect(morphRect, targetRect, fullRect, geometry);
+            morphRadius = lerp(targetRadius, 0f, geometry);
         } else {
-            alpha = clamp01((1f - p) / (1f - CLOSE_ALPHA_HOLD_PROGRESS));
+            lerpRect(morphRect, fullRect, targetRect, geometry);
+            morphRadius = lerp(0f, targetRadius, geometry);
         }
-        morphView.setAlpha(alpha);
-        morphView.invalidate();
 
-        // 4. Нижний слой уходит вглубь и затемняется; при раскрытии возвращается обратно.
-        final float backProgress = 1f - p;
-        backView.setScaleX(lerp(1f, BACK_LAYER_SCALE, backProgress));
-        backView.setScaleY(lerp(1f, BACK_LAYER_SCALE, backProgress));
-        backView.setAlpha(lerp(1f, BACK_LAYER_ALPHA, backProgress));
+        // 2. Содержимое чата: scale всегда 1.0f, translation сбрасывается — сам экран
+        //    не деформируется и не обрезается, он лишь проявляется/растворяется.
+        morphView.setScaleX(1f);
+        morphView.setScaleY(1f);
+        // При завершении свайпа назад сохраняем накопленный сдвиг, пока содержимое ещё
+        // видно; когда альфа дошла до нуля, сдвиг можно безопасно обнулить.
+        if (swipeBack && !open && t < CLOSE_CONTENT_ALPHA_END) {
+            morphView.setTranslationX(swipeTranslation);
+        } else {
+            morphView.setTranslationX(0f);
+        }
+        morphView.setTranslationY(0f);
+        final float contentAlpha;
+        if (open) {
+            contentAlpha = t <= OPEN_CONTENT_ALPHA_START
+                    ? 0f
+                    : CubicBezierInterpolator.EASE_OUT.getInterpolation(
+                            clamp01((t - OPEN_CONTENT_ALPHA_START) / (1f - OPEN_CONTENT_ALPHA_START)));
+        } else {
+            contentAlpha = t >= CLOSE_CONTENT_ALPHA_END
+                    ? 0f
+                    : 1f - CubicBezierInterpolator.EASE_OUT.getInterpolation(
+                            clamp01(t / CLOSE_CONTENT_ALPHA_END));
+        }
+        morphView.setAlpha(contentAlpha);
+
+        // 3. Альфа самой плашки. При открытии она остаётся плотной под проявляющимся чатом;
+        //    при закрытии — гаснет только на последних 20% пути, уже поверх карточки.
+        if (open) {
+            morphAlpha = 1f;
+        } else if (t <= CLOSE_OVERLAY_ALPHA_END_START) {
+            morphAlpha = 1f;
+        } else {
+            morphAlpha = clamp01((1f - t) / (1f - CLOSE_OVERLAY_ALPHA_END_START));
+        }
+
+        // 4. Нижний слой (список диалогов) не масштабируется и не затемняется: плашка
+        //    сжимается ровно в координаты нарисованной карточки.
+        backView.setScaleX(1f);
+        backView.setScaleY(1f);
+        backView.setTranslationX(0f);
+        backView.setTranslationY(0f);
+        backView.setAlpha(1f);
+
+        morphView.invalidate();
         backView.invalidate();
+        // Плашка рисуется в родителе (ActionBarLayout), поэтому просим перерисовать и его:
+        // иначе при alpha = 0 у чата кадр плашки мог бы не обновиться.
+        final ViewParent parent = morphView.getParent();
+        if (parent instanceof View) {
+            ((View) parent).invalidate();
+        }
     }
 
     /**
-     * @return {@code true}, если контейнер прямо сейчас обрезается в капсулу.
-     *         Нужен, чтобы статичная тень шапки не рисовалась поверх сжимающегося окна.
+     * @return {@code true}, если контейнер прямо сейчас участвует в морфинге.
+     *         Нужен, чтобы статичная тень шапки не рисовалась поверх переходного кадра.
      */
     public static boolean isMorphing(View view) {
         return view != null && morphingViews.containsKey(view);
     }
 
     /**
-     * Принудительно снимает с контейнера все эффекты перехода: масштаб, прозрачность, сдвиги,
-     * точку опоры, обрезку по контуру и размытие. Нужен и по завершении аниматора, и при
-     * аварийном обрыве перехода в {@code ActionBarLayout} — иначе остаётся остаточное
-     * изображение (сжатый, смещённый или полупрозрачный слой).
+     * @return {@code true}, если плашку нужно нарисовать прямо перед этим контейнером.
+     *         {@link ActionBarLayout} вызывает {@link #drawMorphOverlay(Canvas)} в своём
+     *         {@code drawChild} для этого вида: так плашка оказывается над списком диалогов,
+     *         но под содержимым чата, и его плавное проявление/растворение видно корректно.
+     */
+    public static boolean isMorphFrontContainer(View view) {
+        return morphOverlayVisible && view != null && morphFrontView != null
+                && morphFrontView.get() == view;
+    }
+
+    /** @return {@code true}, пока активен морфинг и плашку нужно рисовать. */
+    public static boolean isMorphOverlayVisible() {
+        return morphOverlayVisible;
+    }
+
+    /** Начинает новый кадр отрисовки: плашка снова может быть нарисована один раз. */
+    public static void beginMorphOverlayFrame() {
+        morphOverlayDrawnInFrame = false;
+    }
+
+    /**
+     * Рисует текущий кадр скруглённой плашки-капсулы цветом фона чата.
+     * Координаты {@link #morphRect} хранятся в локальном пространстве
+     * {@link ActionBarLayout}, поэтому canvas должен быть в тех же координатах.
+     *
+     * <p>За один кадр плашка рисуется только один раз: штатно её вызывает
+     * {@code ActionBarLayout.drawChild} перед передним контейнером, а вызов в конце
+     * {@code dispatchDraw} ничего не дублирует.</p>
+     */
+    public static void drawMorphOverlay(Canvas canvas) {
+        if (!morphOverlayVisible || canvas == null || morphAlpha <= 0f) {
+            return;
+        }
+        if (morphOverlayDrawnInFrame) {
+            return;
+        }
+        if (morphRect.width() <= 0f || morphRect.height() <= 0f) {
+            return;
+        }
+        final int alpha = Math.round(255f * clamp01(morphAlpha));
+        if (alpha <= 0) {
+            return;
+        }
+        morphOverlayDrawnInFrame = true;
+        morphPaint.setStyle(Paint.Style.FILL);
+        morphPaint.setColor(Theme.getColor(Theme.key_windowBackgroundWhite));
+        morphPaint.setAlpha(alpha);
+        final float radius = Math.max(0f, Math.min(morphRadius,
+                Math.min(morphRect.width(), morphRect.height()) / 2f));
+        canvas.drawRoundRect(morphRect, radius, radius, morphPaint);
+    }
+
+    /** Выключает отрисовку плашки и отпускает ссылку на передний контейнер. */
+    private static void clearMorphOverlay() {
+        morphOverlayVisible = false;
+        morphFrontView = null;
+        morphAlpha = 0f;
+    }
+
+    /**
+     * Принудительно снимает с контейнера все эффекты перехода: масштаб, прозрачность, сдвиги
+     * и точку опоры. Плашка при этом выключается, если контейнер был её передним слоем.
+     * Нужен и по завершении аниматора, и при аварийном обрыве перехода в
+     * {@code ActionBarLayout} — иначе остаётся остаточный кадр перехода.
      */
     public static void resetScreenEffects(View view) {
         if (view == null) {
             return;
+        }
+        if (morphFrontView != null && morphFrontView.get() == view) {
+            clearMorphOverlay();
         }
         morphingViews.remove(view);
         view.setScaleX(1f);
@@ -553,11 +674,6 @@ public final class PakoogramAnimations {
         // Точка опоры возвращается в центр контейнера: следующий переход выставит её заново.
         view.setPivotX(view.getWidth() / 2f);
         view.setPivotY(view.getHeight() / 2f);
-        view.setClipToOutline(false);
-        if (view.getOutlineProvider() != ViewOutlineProvider.BACKGROUND) {
-            view.setOutlineProvider(ViewOutlineProvider.BACKGROUND);
-        }
-        view.invalidateOutline();
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             view.setRenderEffect(null);
         }
@@ -567,8 +683,8 @@ public final class PakoogramAnimations {
     /**
      * Запускает анимацию открытия строго после первой раскладки нового фрагмента:
      * ждём {@code OnPreDraw}, когда контейнер и его контент уже получили реальные размеры,
-     * и только тогда стартуем. До первого кадра окно уже обрезано в капсулу и непрозрачно,
-     * поэтому полноэкранный необработанный кадр не мелькает.
+     * и только тогда стартуем. До первого кадра содержимое чата прозрачно, а плашка уже
+     * стоит в прямоугольнике карточки, поэтому пустой экран не мелькает.
      */
     private static void startTransitionWhenLaidOut(final AnimatorSet animation, final View container) {
         if (animation == null) {
@@ -644,62 +760,27 @@ public final class PakoogramAnimations {
     /* ------------------------------------------------------------------ геометрия */
 
     /**
-     * Обрезает view по текущему прямоугольнику капсулы через {@link ViewOutlineProvider}.
-     * Контур задаётся в локальных координатах вида и затем трансформируется вместе с ним,
-     * поэтому рамка обрезки и масштаб окна всегда движутся синхронно.
+     * Полный прямоугольник экрана в координатах {@link ActionBarLayout}. Плашка рисуется
+     * именно в них, поэтому берём размеры запомненного контейнера, а если его нет —
+     * размеры самого переднего вида (обычно они совпадают).
      */
-    private static void applyCapsuleClip(View view, RectF rect, float radius) {
-        if (view == null) {
+    private static void resolveMorphFullRect(View morphView, RectF out) {
+        final View container = capturedContainerView != null ? capturedContainerView.get() : null;
+        if (container != null && container.getWidth() > 0 && container.getHeight() > 0) {
+            out.set(0f, 0f, container.getWidth(), container.getHeight());
             return;
         }
-        CapsuleOutlineProvider provider;
-        if (view.getOutlineProvider() instanceof CapsuleOutlineProvider) {
-            provider = (CapsuleOutlineProvider) view.getOutlineProvider();
-        } else {
-            provider = new CapsuleOutlineProvider();
-            view.setOutlineProvider(provider);
-        }
-        provider.set(rect, radius);
-        if (!view.getClipToOutline()) {
-            view.setClipToOutline(true);
-        }
-        view.invalidateOutline();
-    }
-
-    /**
-     * Переводит прямоугольник капсулы из координат контейнера, в котором он был запомнен
-     * ({@link ActionBarLayout}), в локальные координаты вида {@code view}. Обычно контейнер
-     * перехода — прямой ребёнок {@link ActionBarLayout} с размерами во весь экран, поэтому
-     * смещение нулевое, но вычисляем его честно через {@code getLocationInWindow}.
-     */
-    private static void toLocalRect(View view, RectF containerLocalRect, RectF out) {
-        final int[] viewLocation = new int[2];
-        final int[] containerLocation = new int[2];
-        view.getLocationInWindow(viewLocation);
-        final View container = capturedContainerView != null ? capturedContainerView.get() : null;
-        if (container != null) {
-            container.getLocationInWindow(containerLocation);
-        } else {
-            containerLocation[0] = 0;
-            containerLocation[1] = 0;
-        }
-        final float offsetX = containerLocation[0] - viewLocation[0];
-        final float offsetY = containerLocation[1] - viewLocation[1];
-        out.set(
-                containerLocalRect.left + offsetX,
-                containerLocalRect.top + offsetY,
-                containerLocalRect.right + offsetX,
-                containerLocalRect.bottom + offsetY);
+        out.set(0f, 0f, morphView.getWidth(), morphView.getHeight());
     }
 
     /** Запасная центральная капсула, если прямоугольник карточки так и не был запомнен. */
-    private static void fallbackCapsule(View view, RectF out) {
-        final float width = view.getWidth();
-        final float height = view.getHeight();
+    private static void fallbackCapsule(RectF fullRect, RectF out) {
+        final float width = fullRect.width();
+        final float height = fullRect.height();
         final float capsuleWidth = width * FALLBACK_CAPSULE_WIDTH_RATIO;
         final float capsuleHeight = height * FALLBACK_CAPSULE_HEIGHT_RATIO;
-        final float left = (width - capsuleWidth) / 2f;
-        final float top = (height - capsuleHeight) / 2f;
+        final float left = fullRect.left + (width - capsuleWidth) / 2f;
+        final float top = fullRect.top + (height - capsuleHeight) / 2f;
         out.set(left, top, left + capsuleWidth, top + capsuleHeight);
     }
 
@@ -715,7 +796,7 @@ public final class PakoogramAnimations {
 
     /**
      * Длительность перехода с учётом множителя скорости из настроек (0.5x..1.5x):
-     * {@code Math.round(330f / speed)} мс на открытие и {@code Math.round(300f / speed)} мс на закрытие.
+     * {@code Math.round(320f / speed)} мс на открытие и {@code Math.round(290f / speed)} мс на закрытие.
      *
      * @param open {@code true} — раскрытие экрана, {@code false} — закрытие
      */
@@ -725,73 +806,30 @@ public final class PakoogramAnimations {
         return Math.max(1L, Math.round(base / speed));
     }
 
-    /** Длительность открытия экрана: 330 мс, поделённые на множитель скорости. */
+    /** Длительность открытия экрана: 320 мс, поделённые на множитель скорости. */
     public static long getOpenTransitionDuration() {
         return getTransitionDuration(true);
     }
 
-    /** Длительность закрытия экрана: 300 мс, поделённые на множитель скорости. */
+    /** Длительность закрытия экрана: 290 мс, поделённые на множитель скорости. */
     public static long getCloseTransitionDuration() {
         return getTransitionDuration(false);
     }
 
-    /** Плавная кривая морфинга: {@code PathInterpolator(0.25, 0.1, 0.25, 1.0)}. */
+    /** Плавная кривая морфинга: {@code PathInterpolator(0.22, 1.0, 0.36, 1.0)}. */
     private static TimeInterpolator getColorOsInterpolator() {
         if (colorOsInterpolator == null) {
             TimeInterpolator interpolator;
             try {
-                interpolator = new PathInterpolator(0.25f, 0.1f, 0.25f, 1.0f);
+                interpolator = new PathInterpolator(0.22f, 1.0f, 0.36f, 1.0f);
             } catch (Throwable ignore) {
                 // Часть прошивок отвергает нестандартные контрольные точки X: берём ту же кривую,
                 // посчитанную вручную, чтобы переход не ломался.
-                interpolator = new CubicBezierInterpolator(0.25f, 0.1f, 0.25f, 1.0f);
+                interpolator = new CubicBezierInterpolator(0.22f, 1.0f, 0.36f, 1.0f);
             }
             colorOsInterpolator = interpolator;
         }
         return colorOsInterpolator;
-    }
-
-    /**
-     * Провайдер контура капсулы: прямоугольник и радиус меняются каждый кадр, поэтому
-     * окно «сворачивается» в карточку по-настоящему, а не растворяется в воздухе.
-     */
-    private static final class CapsuleOutlineProvider extends ViewOutlineProvider {
-
-        private final RectF capsuleRect = new RectF();
-        private float radius;
-
-        void set(RectF rect, float newRadius) {
-            capsuleRect.set(rect);
-            radius = newRadius;
-        }
-
-        @Override
-        public void getOutline(View view, Outline outline) {
-            final int width = view.getWidth();
-            final int height = view.getHeight();
-            if (width <= 0 || height <= 0) {
-                return;
-            }
-            if (capsuleRect.width() <= 0f || capsuleRect.height() <= 0f) {
-                outline.setRect(0, 0, width, height);
-                return;
-            }
-            final int left = Math.round(capsuleRect.left);
-            final int top = Math.round(capsuleRect.top);
-            final int right = Math.round(capsuleRect.right);
-            final int bottom = Math.round(capsuleRect.bottom);
-            if (right <= left || bottom <= top) {
-                // Капсула полностью за пределами вида — пустой контур, окно не рисуется.
-                outline.setRect(left, top, left + 1, top + 1);
-                return;
-            }
-            final float rounded = Math.min(radius, Math.min(right - left, bottom - top) / 2f);
-            if (rounded < 0.5f) {
-                outline.setRect(left, top, right, bottom);
-            } else {
-                outline.setRoundRect(left, top, right, bottom, rounded);
-            }
-        }
     }
 
     private static float lerp(float start, float end, float progress) {
