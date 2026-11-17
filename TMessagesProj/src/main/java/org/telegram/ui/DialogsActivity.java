@@ -147,7 +147,6 @@ import org.telegram.tgnet.tl.TL_chatlists;
 import org.telegram.tgnet.tl.TL_stars;
 import org.telegram.tgnet.tl.TL_stories;
 import org.telegram.ui.ActionBar.ActionBar;
-import org.telegram.ui.ActionBar.ActionBarLayout;
 import org.telegram.ui.ActionBar.ActionBarMenu;
 import org.telegram.ui.ActionBar.ActionBarMenuItem;
 import org.telegram.ui.ActionBar.ActionBarMenuSubItem;
@@ -4493,15 +4492,6 @@ public class DialogsActivity extends BaseFragment implements NotificationCenter.
             viewPage.listView.setOnItemClickListener((view, position, x, y) -> {
                 if (view instanceof GraySectionCell)
                     return;
-                if (view instanceof DialogCell) {
-                    // Pakoogram: из этой карточки раскроется чат — запоминаем её прямоугольник
-                    // строго в локальных координатах родительского ActionBarLayout.
-                    final INavigationLayout navigationLayout = getParentLayout();
-                    final ActionBarLayout actionBarLayout = navigationLayout instanceof ActionBarLayout
-                            ? (ActionBarLayout) navigationLayout
-                            : null;
-                    PakoogramAnimations.captureOrigin(view, actionBarLayout);
-                }
                 if (view instanceof DialogCell && ((DialogCell) view).isBlocked()) {
                     showPremiumBlockedToast(view, ((DialogCell) view).getDialogId());
                     return;
@@ -8097,16 +8087,6 @@ public class DialogsActivity extends BaseFragment implements NotificationCenter.
     private void onItemClick(View view, int position, RecyclerListView.Adapter adapter, float x, float y) {
         if (getParentActivity() == null) {
             return;
-        }
-        if (view instanceof DialogCell) {
-            // Pakoogram: запоминаем точную «капсулу» нажатой карточки (внутренний прямоугольник
-            // с боковыми отступами и id чата) строго в локальных координатах ActionBarLayout.
-            // Из неё раскроется ChatActivity, и в неё же он свернётся при закрытии этого же чата.
-            final INavigationLayout navigationLayout = getParentLayout();
-            final ActionBarLayout actionBarLayout = navigationLayout instanceof ActionBarLayout
-                    ? (ActionBarLayout) navigationLayout
-                    : null;
-            PakoogramAnimations.captureOrigin(view, actionBarLayout);
         }
         long dialogId = 0;
         long topicId = 0;

@@ -134,7 +134,6 @@ import org.telegram.ui.Components.dialogs.DialogMediaIconsHelper;
 import org.telegram.ui.Components.spoilers.SpoilerEffect;
 import org.telegram.ui.DialogsActivity;
 import org.telegram.ui.FilterCreateActivity;
-import org.telegram.ui.PakoogramAnimations;
 import org.telegram.ui.PakoogramConfig;
 import org.telegram.ui.RightSlidingDialogContainer;
 import org.telegram.ui.Stars.StarsIntroActivity;
@@ -553,8 +552,8 @@ public class DialogCell extends BaseCell implements StoriesListPlaceProvider.Ava
     // Pakoogram: поля для «стеклянных» карточек диалогов
     /**
      * Горизонтальный отступ «капсулы» карточки внутри ячейки диалога.
-     * Должен совпадать с отступом, который использует {@code PakoogramAnimations.captureOrigin()},
-     * чтобы морфинг чата стартовал/финишировал ровно в нарисованной карточке.
+     * Должен совпадать с отступом нарисованной карточки, чтобы её границы
+     * точно совпадали с фоном и бликом.
      */
     public static final int PAKOGRAM_CARD_MARGIN_HORIZONTAL = 8;
     /** Вертикальный отступ «капсулы» карточки внутри ячейки диалога. */
@@ -6462,10 +6461,6 @@ public class DialogCell extends BaseCell implements StoriesListPlaceProvider.Ava
 
     @Override
     public boolean dispatchTouchEvent(MotionEvent ev) {
-        if (ev.getActionMasked() == MotionEvent.ACTION_DOWN) {
-            // Pakoogram: именно отсюда (в том числе при тапе по аватарке) раскроется чат/профиль.
-            PakoogramAnimations.captureOrigin(this);
-        }
         if (!isTopic && !isShareToStoryCell && ev.getAction() == MotionEvent.ACTION_UP || ev.getAction() == MotionEvent.ACTION_CANCEL) {
             storyParams.checkOnTouchEvent(ev, this);
         }
