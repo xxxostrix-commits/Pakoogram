@@ -8092,6 +8092,12 @@ public class DialogsActivity extends BaseFragment implements NotificationCenter.
         if (getParentActivity() == null) {
             return;
         }
+        if (view instanceof DialogCell) {
+            // Pakoogram: запоминаем точную «капсулу» нажатой карточки (внутренний прямоугольник
+            // с боковыми отступами, радиус и id чата). Из неё раскроется ChatActivity,
+            // и в неё же он свернётся при закрытии этого же чата.
+            PakoogramAnimations.captureOrigin(view);
+        }
         long dialogId = 0;
         long topicId = 0;
         int message_id = 0;

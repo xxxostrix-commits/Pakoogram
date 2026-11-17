@@ -551,8 +551,14 @@ public class DialogCell extends BaseCell implements StoriesListPlaceProvider.Ava
     private PhotoBubbleClip bubbleClip;
     private AvatarDrawable avatarDrawable = new AvatarDrawable();
     // Pakoogram: поля для «стеклянных» карточек диалогов
-    private static final int PAKOGRAM_CARD_MARGIN_HORIZONTAL = 8;
-    private static final float PAKOGRAM_CARD_MARGIN_VERTICAL = 2.5f;
+    /**
+     * Горизонтальный отступ «капсулы» карточки внутри ячейки диалога.
+     * Должен совпадать с отступом, который использует {@code PakoogramAnimations.captureOrigin()},
+     * чтобы морфинг чата стартовал/финишировал ровно в нарисованной карточке.
+     */
+    public static final int PAKOGRAM_CARD_MARGIN_HORIZONTAL = 8;
+    /** Вертикальный отступ «капсулы» карточки внутри ячейки диалога. */
+    public static final float PAKOGRAM_CARD_MARGIN_VERTICAL = 2.5f;
     private static final float PAKOGRAM_CARD_STROKE_WIDTH = 1f;
     private static final int PAKOGRAM_CARD_BACKGROUND_ALPHA = 0x66;
     // Альфы горизонтального градиента карточки: слева (под аватаркой) — яркий акцент чата,
