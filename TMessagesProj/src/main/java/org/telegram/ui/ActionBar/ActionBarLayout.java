@@ -1864,7 +1864,7 @@ public class ActionBarLayout extends FrameLayout implements INavigationLayout, F
      * <p>Штатный пошаговый аниматор этого класса ({@code animationRunnable} + {@code animationProgress})
      * каждый кадр переписывает {@code translationX}, {@code scaleX/Y} и {@code alpha} контейнеров,
      * поэтому при старте морфинга он отменяется и до конца перехода не перезапускается. Длительность
-     * задаёт сам {@link PakoogramAnimations}: 380 мс на открытие и 340 мс на закрытие, поделённые
+     * задаёт сам {@link PakoogramAnimations}: 330 мс на открытие и 300 мс на закрытие, поделённые
      * на множитель скорости из настроек. Открытие стартует после первой раскладки нового
      * фрагмента (см. {@code OnPreDraw} внутри движка), поэтому стандартный сдвиг
      * {@code translationX} Telegram для чата/профиля не применяется вовсе.</p>
@@ -2032,8 +2032,8 @@ public class ActionBarLayout extends FrameLayout implements INavigationLayout, F
                 && (PakoogramAnimations.canAnimateTransition(newFragment) || PakoogramAnimations.canAnimateTransition(oldFragment));
         if (first && colorOsMorphWithoutSlide && !pakoogramMorphRunning) {
             // Pakoogram: переключатель «Анимации переходов ColorOS» включён и пользователь не тянет
-            // экран назад — переход ведёт исключительно PakoogramAnimations (380 мс открытие,
-            // 340 мс закрытие, оба делятся на множитель скорости). Штатный пошаговый аниматор
+            // экран назад — переход ведёт исключительно PakoogramAnimations (330 мс открытие,
+            // 300 мс закрытие, оба делятся на множитель скорости). Штатный пошаговый аниматор
             // в такой переход не вмешивается, иначе он перезаписывал бы translationX/scale/alpha.
             final AnimatorSet pakoogramAnimation = createPakoogramMorphAnimation(open);
             if (pakoogramAnimation != null) {
@@ -2923,7 +2923,7 @@ public class ActionBarLayout extends FrameLayout implements INavigationLayout, F
                     if (animation == null) {
                         // Pakoogram: обратный морфинг — закрываемый экран сворачивается в капсулу
                         // карточки (или в запасную капсулу в центре, если прямоугольник нажатия
-                        // не сохранился), 340 мс.
+                        // не сохранился), 300 мс.
                         animation = createPakoogramMorphAnimation(false);
                     }
                 }

@@ -4493,8 +4493,11 @@ public class DialogsActivity extends BaseFragment implements NotificationCenter.
                 if (view instanceof GraySectionCell)
                     return;
                 if (view instanceof DialogCell) {
-                    // Pakoogram: из этой карточки раскроется чат — запоминаем её прямоугольник.
-                    PakoogramAnimations.captureOrigin(view);
+                    // Pakoogram: из этой карточки раскроется чат — запоминаем её прямоугольник
+                    // в локальных координатах родительского ActionBarLayout.
+                    final INavigationLayout navigationLayout = getParentLayout();
+                    PakoogramAnimations.captureOrigin(view,
+                            navigationLayout instanceof View ? (View) navigationLayout : null);
                 }
                 if (view instanceof DialogCell && ((DialogCell) view).isBlocked()) {
                     showPremiumBlockedToast(view, ((DialogCell) view).getDialogId());
@@ -8094,9 +8097,11 @@ public class DialogsActivity extends BaseFragment implements NotificationCenter.
         }
         if (view instanceof DialogCell) {
             // Pakoogram: запоминаем точную «капсулу» нажатой карточки (внутренний прямоугольник
-            // с боковыми отступами, радиус и id чата). Из неё раскроется ChatActivity,
-            // и в неё же он свернётся при закрытии этого же чата.
-            PakoogramAnimations.captureOrigin(view);
+            // с боковыми отступами, радиус и id чата) в локальных координатах ActionBarLayout.
+            // Из неё раскроется ChatActivity, и в неё же он свернётся при закрытии этого же чата.
+            final INavigationLayout navigationLayout = getParentLayout();
+            PakoogramAnimations.captureOrigin(view,
+                    navigationLayout instanceof View ? (View) navigationLayout : null);
         }
         long dialogId = 0;
         long topicId = 0;
