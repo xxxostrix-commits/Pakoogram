@@ -764,11 +764,11 @@ public class ActionBarLayout extends FrameLayout implements INavigationLayout, F
     private boolean showLastAfterAnimation;
     private long transitionAnimationStartTime;
     /** Pakoogram: стартовый сдвиг экрана при открытии/закрытии чата (доля ширины). */
-    private static final float PAKOGRAM_TRANSITION_OFFSET_FACTOR = 0.22f;
+    private static final float PAKOGRAM_TRANSITION_OFFSET_FACTOR = 0.55f;
     /** Pakoogram: стартовый масштаб экрана при открытии/закрытии чата. */
-    private static final float PAKOGRAM_TRANSITION_START_SCALE = 0.92f;
+    private static final float PAKOGRAM_TRANSITION_START_SCALE = 0.88f;
     /** Pakoogram: длительность анимации открытия/закрытия чата. */
-    private static final long PAKOGRAM_TRANSITION_DURATION = 240L;
+    private static final long PAKOGRAM_TRANSITION_DURATION = 340L;
     private boolean inActionMode;
     private int startedTrackingPointerId;
     private Runnable onCloseAnimationEndRunnable;
@@ -2049,14 +2049,14 @@ public class ActionBarLayout extends FrameLayout implements INavigationLayout, F
                     } else {
                         interpolated = CubicBezierInterpolator.EASE_OUT_QUINT.getInterpolation(animationProgress);
                     }
+                } else if (pakoogramTransition) {
+                    // Pakoogram: мягкое затухание скорости для перехода чата.
+                    interpolated = CubicBezierInterpolator.EASE_OUT_QUINT.getInterpolation(animationProgress);
                 } else {
                     interpolated = decelerateInterpolator.getInterpolation(animationProgress);
                 }
                 if (open) {
-                    final float pakoogramInterpolated = pakoogramTransition
-                            ? CubicBezierInterpolator.EASE_OUT_QUINT.getInterpolation(animationProgress)
-                            : interpolated;
-                    float clampedInterpolated = MathUtils.clamp(pakoogramInterpolated, 0, 1);
+                    float clampedInterpolated = MathUtils.clamp(interpolated, 0, 1);
                     containerView.setAlpha(clampedInterpolated);
                     if (preview) {
                         containerView.setScaleX(0.7f + 0.3f * interpolated);
@@ -2072,8 +2072,8 @@ public class ActionBarLayout extends FrameLayout implements INavigationLayout, F
                         containerView.invalidate();
                         invalidate();
                     } else {
-                        // Pakoogram: входящий чат мягко выезжает слева направо,
-                        // одновременно проявляясь и увеличиваясь с 0.92 до 1.0.
+                        // Pakoogram: входящий чат выезжает справа (0.55 ширины),
+                        // одновременно проявляясь и увеличиваясь с 0.88 до 1.0.
                         final float offset = pakoogramTransition ? getPakoogramTransitionOffset() : dp(48);
                         final float startScale = pakoogramTransition ? PAKOGRAM_TRANSITION_START_SCALE : 1f;
                         containerView.setTranslationX(offset * (1.0f - clampedInterpolated));
@@ -2081,12 +2081,13 @@ public class ActionBarLayout extends FrameLayout implements INavigationLayout, F
                         containerView.setScaleX(scale);
                         containerView.setScaleY(scale);
                         if (pakoogramTransition) {
-                            // Нижний экран остаётся полностью видимым и лишь чуть
-                            // отъезжает влево, пока его закрывает новый чат.
+                            // Нижний экран (список чатов) остаётся полностью видимым:
+                            // он плавно уходит чуть влево и слегка уменьшается 1.0 → 0.94.
                             containerViewBack.setAlpha(1f);
-                            containerViewBack.setTranslationX(-dp(36) * clampedInterpolated);
-                            containerViewBack.setScaleX(1f);
-                            containerViewBack.setScaleY(1f);
+                            containerViewBack.setTranslationX(-getWidth() * 0.16f * clampedInterpolated);
+                            final float backScale = 1f - 0.06f * clampedInterpolated;
+                            containerViewBack.setScaleX(backScale);
+                            containerViewBack.setScaleY(backScale);
                         }
                     }
                 } else {
@@ -2101,23 +2102,22 @@ public class ActionBarLayout extends FrameLayout implements INavigationLayout, F
                         }
                         containerView.invalidate();
                         invalidate();
-                    } else {
+                    } else if (pakoogramTransition) {
                         // Pakoogram: закрывающийся чат уезжает вправо, уменьшается
-                        // с 1.0 до 0.92 и растворяется, а предыдущий экран всегда
-                        // остаётся alpha = 1f и возвращается лёгким параллаксом.
-                        final float offset = pakoogramTransition ? getPakoogramTransitionOffset() : dp(48);
-                        if (pakoogramTransition) {
-                            containerView.setAlpha(1f);
-                            containerView.setTranslationX(-dp(36) * (1.0f - interpolated));
-                            final float incomingScale = 0.95f + 0.05f * interpolated;
-                            containerView.setScaleX(incomingScale);
-                            containerView.setScaleY(incomingScale);
+                        // с 1.0 до 0.88 и растворяется, а список чатов всегда
+                        // остаётся полностью видимым и возвращается из scale 0.94.
+                        containerView.setAlpha(1f);
+                        containerView.setTranslationX(-getWidth() * 0.16f * (1.0f - interpolated));
+                        final float incomingScale = 0.94f + 0.06f * interpolated;
+                        containerView.setScaleX(incomingScale);
+                        containerView.setScaleY(incomingScale);
 
-                            final float outgoingScale = 1f - 0.08f * interpolated;
-                            containerViewBack.setScaleX(outgoingScale);
-                            containerViewBack.setScaleY(outgoingScale);
-                        }
-                        containerViewBack.setTranslationX(offset * interpolated);
+                        final float outgoingScale = 1f - 0.12f * interpolated;
+                        containerViewBack.setScaleX(outgoingScale);
+                        containerViewBack.setScaleY(outgoingScale);
+                        containerViewBack.setTranslationX(getWidth() * 0.65f * interpolated);
+                    } else {
+                        containerViewBack.setTranslationX(dp(48) * interpolated);
                     }
                 }
                 if (animationProgress < 1) {
@@ -2852,14 +2852,14 @@ public class ActionBarLayout extends FrameLayout implements INavigationLayout, F
                 transitionAnimationInProgress = true;
                 layoutToIgnore = containerView;
                 if (!inPreviewMode && !transitionAnimationPreviewMode && isPakoogramTransitionEnabled()) {
-                    // Pakoogram: нижний экран всегда полностью виден; он лишь
-                    // возвращается из лёгкого сдвига -36dp и scale 0.95 → 1.0,
-                    // а закрывающийся верхний чат уезжает вправо и растворяется.
+                    // Pakoogram: список чатов всегда полностью виден; он возвращается
+                    // из лёгкого сдвига влево и scale 0.94 → 1.0, а закрывающийся
+                    // верхний чат уезжает вправо и растворяется.
                     pakoogramTransitionOpening = false;
                     containerView.setAlpha(1f);
-                    containerView.setTranslationX(-dp(36));
-                    containerView.setScaleX(0.95f);
-                    containerView.setScaleY(0.95f);
+                    containerView.setTranslationX(-getWidth() * 0.16f);
+                    containerView.setScaleX(0.94f);
+                    containerView.setScaleY(0.94f);
                     containerViewBack.setAlpha(1f);
                     containerViewBack.setTranslationX(0f);
                     containerViewBack.setScaleX(1f);
@@ -2879,21 +2879,21 @@ public class ActionBarLayout extends FrameLayout implements INavigationLayout, F
                         }
                     }
                     if (inPreviewMode || transitionAnimationPreviewMode) {
-                        containerViewBack.setScaleX(1.0f);
-                        containerViewBack.setScaleY(1.0f);
                         inPreviewMode = false;
                         previewMenu = null;
                         transitionAnimationPreviewMode = false;
-                    } else {
-                        containerView.setAlpha(1f);
-                        containerView.setTranslationX(0);
-                        containerView.setScaleX(1f);
-                        containerView.setScaleY(1f);
-                        containerViewBack.setAlpha(1f);
-                        containerViewBack.setTranslationX(0);
-                        containerViewBack.setScaleX(1f);
-                        containerViewBack.setScaleY(1f);
                     }
+                    // Pakoogram: гарантированно возвращаем оба контейнера в исходное
+                    // состояние, чтобы после анимации не оставалось остаточных
+                    // сдвигов, масштаба и прозрачности.
+                    containerView.setTranslationX(0f);
+                    containerView.setScaleX(1f);
+                    containerView.setScaleY(1f);
+                    containerView.setAlpha(1f);
+                    containerViewBack.setTranslationX(0f);
+                    containerViewBack.setScaleX(1f);
+                    containerViewBack.setScaleY(1f);
+                    containerViewBack.setAlpha(1f);
                     closeLastFragmentInternalRemoveOld(currentFragment);
                     currentFragment.setRemovingFromStack(false);
                     currentFragment.onTransitionAnimationEnd(false, true);
