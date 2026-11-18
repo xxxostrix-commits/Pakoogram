@@ -221,6 +221,7 @@ import org.telegram.ui.Cells.TextCheckCell;
 import org.telegram.ui.Cells.TextDetailCell;
 import org.telegram.ui.Cells.TextInfoPrivacyCell;
 import org.telegram.ui.Cells.UserCell;
+import org.telegram.ui.Cells.UserInfoCell;
 import org.telegram.ui.Components.AlertsCreator;
 import org.telegram.ui.Components.AnimatedColor;
 import org.telegram.ui.Components.AnimatedEmojiDrawable;
@@ -351,6 +352,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
+import java.util.TreeSet;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.zip.ZipEntry;
@@ -385,6 +387,8 @@ public class ProfileActivity extends BaseFragment implements NotificationCenter.
     private final RectF pakoogramInfoGlassRect = new RectF();
     private final RectF pakoogramInfoGlassChildRect = new RectF();
     private final RectF pakoogramInfoGlassListRect = new RectF();
+    /** Pakoogram: строки, которые объединяются в стеклянные карточки, по возрастанию. */
+    private final TreeSet<Integer> pakoogramInfoGlassRows = new TreeSet<>();
     private RecyclerListView searchListView;
     private LinearLayoutManager layoutManager;
     private ListAdapter listAdapter;
@@ -4437,11 +4441,24 @@ public class ProfileActivity extends BaseFragment implements NotificationCenter.
             }
         };
         listView.setLegacySections(false);
-        listView.setSections();
+        if (PakoogramConfig.isAdaptiveChatThemeEnabled()) {
+            // Pakoogram: стандартные непрозрачные карточки секций отключены —
+            // их место занимает матовое стекло drawPakoogramInfoGlass,
+            // сквозь которое видны облака и градиент экрана.
+            listView.disableSections();
+        } else {
+            listView.setSections();
+        }
         listView.applyPaddingToSections = false;
         // the rows above the list's top go under the header's blur, with their cards
         listView.setSectionsOverscanTop(AndroidUtilities.statusBarHeight + ActionBar.getCurrentActionBarHeight());
-        ThemeBind.backgroundColor(listView, Theme.key_windowBackgroundGray, resourcesProvider);
+        if (PakoogramConfig.isAdaptiveChatThemeEnabled()) {
+            // Pakoogram: под списком видны облака и стекло карточек,
+            // поэтому стандартная непрозрачная заливка не нужна.
+            listView.setBackgroundColor(Color.TRANSPARENT);
+        } else {
+            ThemeBind.backgroundColor(listView, Theme.key_windowBackgroundGray, resourcesProvider);
+        }
         listView.setVerticalScrollBarEnabled(false);
         final IBlur3Capture listViewCapture = new ViewGroupPartRenderer(listView, (ViewGroup) fragmentView, (canvas, child, drawingTime) -> {
             if (child == sharedMediaLayout) {
@@ -6170,6 +6187,10 @@ public class ProfileActivity extends BaseFragment implements NotificationCenter.
         // the glass of the header's buttons is over the colored header and the avatar as well
         // only the images of the header: its texts (the name, the status) and buttons are over the glass, not under it
         iBlur3Capture = (c, p) -> {
+            // Pakoogram: стеклянные кнопки шапки («<-» и «⋮») и музыкальная
+            // плашка захватывают и размывают облака, а не обрезают их.
+            drawPakoogramScreenBackground(c);
+            drawPakoogramDreamLayer(c);
             final ViewGroup root = (ViewGroup) fragmentView;
             // over the media only they are under the glass: the rows above them would show through the pages' overscan
             final float mediaProgress = sharedMediaLayout != null && sharedMediaLayout.getParent() == listView ? mediaHeaderAnimationProgress : 0f;
@@ -11071,23 +11092,79 @@ public class ProfileActivity extends BaseFragment implements NotificationCenter.
     /**
      * Pakoogram: матовое стекло карточек информации профиля.
      *
-     * <p>Прямоугольник собирается из видимых строк {@code infoStartRow..infoEndRow}
-     * и ограничивается границами списка. Стекло рисуется до детей {@code fragmentView},
-     * поэтому облака и свечение мягко просвечивают сквозь него, а текст остаётся сверху.</p>
+     * <p>Прямоугольники собираются из видимых информационных строк: диапазона
+     * {@code infoStartRow..infoEndRow}, строк своего профиля ({@code numberRow},
+     * {@code birthdayRow}, {@code setUsernameRow}, {@code bioRow}, {@code channelRow},
+     * {@code idRow}) и строк секций настроек. Подряд идущие строки группируются
+     * в единую карточку, поэтому стекло повторяет форму секций. Оно рисуется до
+     * детей {@code fragmentView}: облака и свечение мягко просвечивают сквозь него,
+     * а текст остаётся сверху.</p>
      */
     private void drawPakoogramInfoGlass(Canvas canvas) {
         if (!PakoogramConfig.isAdaptiveChatThemeEnabled() || listView == null || fragmentView == null
                 || listView.getVisibility() != View.VISIBLE) {
             return;
         }
-        final int firstRow = infoStartRow;
-        final int lastRow = infoEndRow;
-        if (firstRow < 0 || lastRow < firstRow) {
-            return;
-        }
         if (!ViewPositionWatcher.computeRectInParent(listView, fragmentView, pakoogramInfoGlassListRect)) {
             return;
         }
+        pakoogramInfoGlassRows.clear();
+        final int firstRow = infoStartRow;
+        final int lastRow = infoEndRow;
+        if (firstRow >= 0 && lastRow >= firstRow) {
+            for (int row = firstRow; row <= lastRow; row++) {
+                pakoogramInfoGlassRows.add(row);
+            }
+        }
+        // Строки своего профиля.
+        addPakoogramInfoGlassRow(numberRow);
+        addPakoogramInfoGlassRow(birthdayRow);
+        addPakoogramInfoGlassRow(setUsernameRow);
+        addPakoogramInfoGlassRow(bioRow);
+        addPakoogramInfoGlassRow(channelRow);
+        addPakoogramInfoGlassRow(idRow);
+        // Информационные строки чужих профилей и каналов.
+        addPakoogramInfoGlassRow(userInfoRow);
+        addPakoogramInfoGlassRow(usernameRow);
+        addPakoogramInfoGlassRow(channelInfoRow);
+        addPakoogramInfoGlassRow(locationRow);
+        addPakoogramInfoGlassRow(notificationsRow);
+        addPakoogramInfoGlassRow(notificationsSimpleRow);
+        // Строки секций настроек.
+        addPakoogramInfoGlassRow(chatRow);
+        addPakoogramInfoGlassRow(privacyRow);
+        addPakoogramInfoGlassRow(notificationRow);
+        addPakoogramInfoGlassRow(dataRow);
+        addPakoogramInfoGlassRow(liteModeRow);
+        addPakoogramInfoGlassRow(filtersRow);
+        addPakoogramInfoGlassRow(devicesRow);
+        addPakoogramInfoGlassRow(languageRow);
+
+        int groupStart = -1;
+        int groupEnd = -1;
+        for (Integer row : pakoogramInfoGlassRows) {
+            if (groupStart < 0) {
+                groupStart = groupEnd = row;
+            } else if (row <= groupEnd + 1) {
+                groupEnd = row;
+            } else {
+                drawPakoogramInfoGlassGroup(canvas, groupStart, groupEnd);
+                groupStart = groupEnd = row;
+            }
+        }
+        if (groupStart >= 0) {
+            drawPakoogramInfoGlassGroup(canvas, groupStart, groupEnd);
+        }
+    }
+
+    private void addPakoogramInfoGlassRow(int row) {
+        if (row >= 0) {
+            pakoogramInfoGlassRows.add(row);
+        }
+    }
+
+    /** Pakoogram: одна стеклянная карточка для подряд идущих строк. */
+    private void drawPakoogramInfoGlassGroup(Canvas canvas, int firstRow, int lastRow) {
         boolean found = false;
         final int childCount = listView.getChildCount();
         for (int i = 0; i < childCount; i++) {
@@ -11109,18 +11186,19 @@ public class ProfileActivity extends BaseFragment implements NotificationCenter.
         if (!found) {
             return;
         }
-        pakoogramInfoGlassRect.inset(dp(10), 0);
+        // Горизонтальный отступ и максимальное скругление углов капсулы.
+        pakoogramInfoGlassRect.inset(dp(14), dp(2));
         if (!pakoogramInfoGlassRect.intersect(pakoogramInfoGlassListRect)) {
             return;
         }
         if (pakoogramInfoGlassRect.height() < dp(8)) {
             return;
         }
-        DreamGlassSurface.drawGlassCard(canvas, pakoogramInfoGlassRect, dp(18),
+        DreamGlassSurface.drawGlassCard(canvas, pakoogramInfoGlassRect, dp(32),
                 Theme.isCurrentThemeDark(), PakoogramConfig.glassOpacity);
     }
 
-    /** Pakoogram: плавная фаза дрейфа облаков и дыхания ауры, полный цикл — 24 секунды. */
+    /** Pakoogram: плавная фаза дрейфа облаков и дыхания ауры, полный цикл — 14 секунд. */
     private void startPakoogramDreamAnimation() {
         if (!PakoogramConfig.isAdaptiveChatThemeEnabled()) {
             stopPakoogramDreamAnimation();
@@ -11130,7 +11208,7 @@ public class ProfileActivity extends BaseFragment implements NotificationCenter.
             return;
         }
         final ValueAnimator animator = ValueAnimator.ofFloat(1f, 0f);
-        animator.setDuration(24000L);
+        animator.setDuration(14000L);
         animator.setRepeatCount(ValueAnimator.INFINITE);
         animator.setRepeatMode(ValueAnimator.RESTART);
         animator.setInterpolator(new LinearInterpolator());
@@ -11225,6 +11303,8 @@ public class ProfileActivity extends BaseFragment implements NotificationCenter.
         if (listView != null) {
             // Pakoogram: список прозрачный — под ним виден единый градиентный фон
             // fragmentView, поэтому при потягивании аватарки вниз нет горизонтального среза.
+            // Секции не рисуют непрозрачные карточки: их заменяет drawPakoogramInfoGlass.
+            listView.disableSections();
             listView.setBackgroundColor(Color.TRANSPARENT);
             listView.invalidateViews();
         }
@@ -14292,36 +14372,18 @@ public class ProfileActivity extends BaseFragment implements NotificationCenter.
             if (viewType != VIEW_TYPE_SHARED_MEDIA) {
                 view.setLayoutParams(new RecyclerView.LayoutParams(RecyclerView.LayoutParams.MATCH_PARENT, RecyclerView.LayoutParams.WRAP_CONTENT));
             }
+            setBackground(view, viewType);
             return new RecyclerListView.Holder(view);
         }
 
         public void setBackground(View view, int viewType) {
-//            switch (viewType) {
-//                case VIEW_TYPE_BOT_APP:
-//                case VIEW_TYPE_CHANNEL:
-//                case VIEW_TYPE_STARS_TEXT_CELL:
-//                case VIEW_TYPE_PREMIUM_TEXT_CELL:
-//                case VIEW_TYPE_LOCATION:
-//                case VIEW_TYPE_HOURS:
-//                case VIEW_TYPE_ADDTOGROUP_INFO:
-//                case VIEW_TYPE_HEADER_EMPTY:
-//                case VIEW_TYPE_USER:
-//                case VIEW_TYPE_COLORFUL_TEXT:
-//                case VIEW_TYPE_NOTIFICATIONS_CHECK_SIMPLE:
-//                case VIEW_TYPE_NOTIFICATIONS_CHECK:
-//                case VIEW_TYPE_DIVIDER:
-//                case VIEW_TYPE_TEXT:
-//                case VIEW_TYPE_ABOUT_LINK:
-//                case VIEW_TYPE_HEADER:
-//                case VIEW_TYPE_TEXT_DETAIL_MULTILINE:
-//                case VIEW_TYPE_TEXT_DETAIL_MULTILINE_2:
-//                case VIEW_TYPE_TEXT_DETAIL:
-//                    view.setBackgroundColor(getThemedColor(Theme.key_windowBackgroundWhite));
-//                    break;
-//                case VIEW_TYPE_VERSION:
-//                    view.setBackgroundColor(getThemedColor(Theme.key_windowBackgroundGray));
-//                    break;
-//            }
+            // Pakoogram: ячейки прозрачны, чтобы глухой прямоугольник
+            // windowBackgroundWhite не перекрывал drawPakoogramInfoGlass и облака.
+            if (PakoogramConfig.isAdaptiveChatThemeEnabled()
+                    && (view instanceof TextDetailCell || view instanceof TextCell
+                    || view instanceof AboutLinkCell || view instanceof UserInfoCell)) {
+                view.setBackgroundColor(Color.TRANSPARENT);
+            }
         }
 
         @Override

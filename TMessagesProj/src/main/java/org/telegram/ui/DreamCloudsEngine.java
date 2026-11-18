@@ -27,14 +27,14 @@ public final class DreamCloudsEngine {
     /** Количество облаков на экране профиля. */
     public static final int CLOUD_COUNT = 10;
     /** Множитель свободной зоны вокруг аватарки. */
-    public static final float AVATAR_CLEAR_FACTOR = 1.65f;
+    public static final float AVATAR_CLEAR_FACTOR = 1.35f;
 
     private static final int MIN_WIDTH = 24;
     private static final int MAX_WIDTH = 36;
     private static final int MIN_HEIGHT = 14;
     private static final int MAX_HEIGHT = 20;
     /** Размер одного пикселя облака в dp. */
-    private static final float PIXEL_SIZE_DP = 2.1f;
+    private static final float PIXEL_SIZE_DP = 6.2f;
     /** Отступ облаков от краёв экрана в dp. */
     private static final float EDGE_INSET_DP = 6f;
 
@@ -66,7 +66,7 @@ public final class DreamCloudsEngine {
      * @param avatarCx     центр аватарки по X
      * @param avatarCy     центр аватарки по Y
      * @param avatarRadius радиус аватарки; {@code 0} отключает свободную зону
-     * @param phase        фаза анимации {@code 0..1} (полный цикл — 24 секунды)
+     * @param phase        фаза анимации {@code 0..1} (полный цикл — 14 секунд)
      * @param isDark       тёмная ли тема
      */
     public static void draw(Canvas canvas, float width, float height,
@@ -108,17 +108,19 @@ public final class DreamCloudsEngine {
                     : width - inset - cloudWidth * 0.5f - sideJitter * horizontalSpan;
 
             // Медленный дрейф по горизонтали и покачивание по вертикали.
-            cx += (float) Math.sin((phase + i * 0.113f) * Math.PI * 2.0) * AndroidUtilities.dpf2(9f);
+            cx += (float) Math.sin((phase + i * 0.113f) * Math.PI * 2.0) * AndroidUtilities.dpf2(26f);
             final float cy = baseY + (float) Math.sin((phase * 0.7f + i * 0.19f) * Math.PI * 2.0)
-                    * AndroidUtilities.dpf2(5f);
+                    * AndroidUtilities.dpf2(10f);
 
-            final float halfDiagonal = (float) Math.hypot(cloudWidth, cloudHeight) * 0.5f;
-            final float safeRadius = clearRadius > 0f ? clearRadius + halfDiagonal : 0f;
+            // Крупные облака свободно живут по бокам от аватарки, возле кнопок
+            // и позади инфо-карточки: в свободную зону добавляется лишь часть
+            // ширины облака, а не полная диагональ, иначе они не помещаются.
+            final float safeRadius = clearRadius > 0f ? clearRadius + cloudWidth * 0.28f : 0f;
             final float drawCx = keepOutsideAvatar(cx, cy, cloudWidth, avatarCx, avatarCy,
                     safeRadius, width, inset);
             // Если облако не помещается сбоку (очень узкий экран), оно уводится
             // ещё и по вертикали: центр удаляется на safeRadius, поэтому весь
-            // прямоугольник остаётся вне круга radius * 1.65f.
+            // прямоугольник остаётся вне круга radius * 1.35f.
             float drawCy = cy;
             if (safeRadius > 0f) {
                 final float dx = drawCx - avatarCx;
@@ -247,9 +249,11 @@ public final class DreamCloudsEngine {
             }
         }
 
-        final int highlightColor = isDark ? 0xC08A96B8 : 0xF4FFFFFF;
-        final int bodyColor = isDark ? 0xB0465168 : 0xE8F4F8FF;
-        final int bottomColor = isDark ? 0x9E2B3344 : 0xD8DCE8F6;
+        // Тёмная тема: мягкие атмосферные Dreamcore-оттенки с приятной
+        // полупрозрачностью вместо глухого серого.
+        final int highlightColor = isDark ? 0xD8E2D9FF : 0xF4FFFFFF;
+        final int bodyColor = isDark ? 0xB89B8EC7 : 0xE8F4F8FF;
+        final int bottomColor = isDark ? 0x98685B96 : 0xD8DCE8F6;
 
         final int[] pixels = new int[width * height];
         for (int x = 0; x < width; x++) {

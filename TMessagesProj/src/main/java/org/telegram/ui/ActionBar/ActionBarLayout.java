@@ -647,6 +647,8 @@ public class ActionBarLayout extends FrameLayout implements INavigationLayout, F
     private boolean beginTrackingSent;
     private boolean transitionAnimationInProgress;
     private boolean transitionAnimationPreviewMode;
+    /** Pakoogram: true, когда верхний анимируемый контейнер — containerView (открытие). */
+    private boolean pakoogramTransitionOpening = true;
     private ArrayList<int[]> animateStartColors = new ArrayList<>();
     private ArrayList<int[]> animateEndColors = new ArrayList<>();
 
@@ -764,7 +766,7 @@ public class ActionBarLayout extends FrameLayout implements INavigationLayout, F
     /** Pakoogram: стартовый сдвиг экрана при открытии/закрытии чата (доля ширины). */
     private static final float PAKOGRAM_TRANSITION_OFFSET_FACTOR = 0.22f;
     /** Pakoogram: стартовый масштаб экрана при открытии/закрытии чата. */
-    private static final float PAKOGRAM_TRANSITION_START_SCALE = 0.96f;
+    private static final float PAKOGRAM_TRANSITION_START_SCALE = 0.92f;
     /** Pakoogram: длительность анимации открытия/закрытия чата. */
     private static final long PAKOGRAM_TRANSITION_DURATION = 240L;
     private boolean inActionMode;
@@ -1288,6 +1290,22 @@ public class ActionBarLayout extends FrameLayout implements INavigationLayout, F
         if (!isTransitionAnimationInProgress() && !inPreviewMode) {
             canvas.clipRect(clipLeft, 0, clipRight, getHeight());
         }
+        if (isTransitionAnimationInProgress() && !isSheet) {
+            // Pakoogram: у открывающегося и закрывающегося чата мягкие
+            // скруглённые углы 28dp вместо прямых углов.
+            final View animatedTop = pakoogramTransitionOpening ? containerView : containerViewBack;
+            if (child == animatedTop && child.getWidth() > 0 && child.getHeight() > 0) {
+                final float scale = Math.max(0.01f, child.getScaleX());
+                final float scaledWidth = child.getWidth() * scale;
+                final float scaledHeight = child.getHeight() * scale;
+                final float left = child.getX() + (child.getWidth() - scaledWidth) * 0.5f;
+                final float top = child.getY() + (child.getHeight() - scaledHeight) * 0.5f;
+                AndroidUtilities.rectTmp.set(left, top, left + scaledWidth, top + scaledHeight);
+                clipPath.rewind();
+                clipPath.addRoundRect(AndroidUtilities.rectTmp, dp(28), dp(28), Path.Direction.CW);
+                canvas.clipPath(clipPath);
+            }
+        }
         if ((inPreviewMode || transitionAnimationPreviewMode) && child == containerView) {
             drawPreviewDrawables(canvas, containerView);
         }
@@ -1475,6 +1493,7 @@ public class ActionBarLayout extends FrameLayout implements INavigationLayout, F
     private void prepareForMoving() {
         maybeStartTracking = false;
         startedTracking = true;
+        pakoogramTransitionOpening = true;
         layoutToIgnore = containerViewBack;
         containerViewBack.setVisibility(View.VISIBLE);
         beginTrackingSent = false;
@@ -1843,6 +1862,7 @@ public class ActionBarLayout extends FrameLayout implements INavigationLayout, F
             animationRunnable = null;
         }
         setAlpha(1.0f);
+        pakoogramTransitionOpening = true;
         if (containerView != null) {
             containerView.setAlpha(1f);
             containerView.setTranslationX(0);
@@ -1962,6 +1982,7 @@ public class ActionBarLayout extends FrameLayout implements INavigationLayout, F
     }
 
     private void startLayoutAnimation(final boolean open, final boolean first, final boolean preview) {
+        pakoogramTransitionOpening = open;
         if (first) {
             animationProgress = 0.0f;
             lastFrameTime = System.nanoTime() / 1000000;
@@ -2032,7 +2053,10 @@ public class ActionBarLayout extends FrameLayout implements INavigationLayout, F
                     interpolated = decelerateInterpolator.getInterpolation(animationProgress);
                 }
                 if (open) {
-                    float clampedInterpolated = MathUtils.clamp(interpolated, 0, 1);
+                    final float pakoogramInterpolated = pakoogramTransition
+                            ? CubicBezierInterpolator.EASE_OUT_QUINT.getInterpolation(animationProgress)
+                            : interpolated;
+                    float clampedInterpolated = MathUtils.clamp(pakoogramInterpolated, 0, 1);
                     containerView.setAlpha(clampedInterpolated);
                     if (preview) {
                         containerView.setScaleX(0.7f + 0.3f * interpolated);
@@ -2049,13 +2073,21 @@ public class ActionBarLayout extends FrameLayout implements INavigationLayout, F
                         invalidate();
                     } else {
                         // Pakoogram: входящий чат мягко выезжает слева направо,
-                        // одновременно проявляясь и увеличиваясь с 0.96 до 1.0.
+                        // одновременно проявляясь и увеличиваясь с 0.92 до 1.0.
                         final float offset = pakoogramTransition ? getPakoogramTransitionOffset() : dp(48);
                         final float startScale = pakoogramTransition ? PAKOGRAM_TRANSITION_START_SCALE : 1f;
-                        containerView.setTranslationX(offset * (1.0f - interpolated));
-                        final float scale = startScale + (1f - startScale) * interpolated;
+                        containerView.setTranslationX(offset * (1.0f - clampedInterpolated));
+                        final float scale = startScale + (1f - startScale) * clampedInterpolated;
                         containerView.setScaleX(scale);
                         containerView.setScaleY(scale);
+                        if (pakoogramTransition) {
+                            // Нижний экран остаётся полностью видимым и лишь чуть
+                            // отъезжает влево, пока его закрывает новый чат.
+                            containerViewBack.setAlpha(1f);
+                            containerViewBack.setTranslationX(-dp(36) * clampedInterpolated);
+                            containerViewBack.setScaleX(1f);
+                            containerViewBack.setScaleY(1f);
+                        }
                     }
                 } else {
                     float clampedReverseInterpolated = MathUtils.clamp(1f - interpolated, 0, 1);
@@ -2070,18 +2102,18 @@ public class ActionBarLayout extends FrameLayout implements INavigationLayout, F
                         containerView.invalidate();
                         invalidate();
                     } else {
-                        // Pakoogram: при закрытии предыдущий экран возвращается тем же
-                        // движением 0.22 ширины → 0, alpha 0 → 1, scale 0.96 → 1.0.
+                        // Pakoogram: закрывающийся чат уезжает вправо, уменьшается
+                        // с 1.0 до 0.92 и растворяется, а предыдущий экран всегда
+                        // остаётся alpha = 1f и возвращается лёгким параллаксом.
                         final float offset = pakoogramTransition ? getPakoogramTransitionOffset() : dp(48);
                         if (pakoogramTransition) {
-                            final float startScale = PAKOGRAM_TRANSITION_START_SCALE;
-                            containerView.setAlpha(MathUtils.clamp(interpolated, 0, 1));
-                            containerView.setTranslationX(offset * (1.0f - interpolated));
-                            final float incomingScale = startScale + (1f - startScale) * interpolated;
+                            containerView.setAlpha(1f);
+                            containerView.setTranslationX(-dp(36) * (1.0f - interpolated));
+                            final float incomingScale = 0.95f + 0.05f * interpolated;
                             containerView.setScaleX(incomingScale);
                             containerView.setScaleY(incomingScale);
 
-                            final float outgoingScale = startScale + (1f - startScale) * (1.0f - interpolated);
+                            final float outgoingScale = 1f - 0.08f * interpolated;
                             containerViewBack.setScaleX(outgoingScale);
                             containerViewBack.setScaleY(outgoingScale);
                         }
@@ -2397,6 +2429,7 @@ public class ActionBarLayout extends FrameLayout implements INavigationLayout, F
                     animation = fragment.onCustomTransitionAnimation(true, () -> onAnimationEndCheck(false));
                 }
                 if (animation == null) {
+                    pakoogramTransitionOpening = true;
                     containerView.setAlpha(0.0f);
                     if (preview) {
                         containerView.setTranslationX(0.0f);
@@ -2819,13 +2852,14 @@ public class ActionBarLayout extends FrameLayout implements INavigationLayout, F
                 transitionAnimationInProgress = true;
                 layoutToIgnore = containerView;
                 if (!inPreviewMode && !transitionAnimationPreviewMode && isPakoogramTransitionEnabled()) {
-                    // Pakoogram: подготавливаем предыдущий экран к тому же мягкому
-                    // возвращению 0.22 ширины → 0, alpha 0 → 1, scale 0.96 → 1.0.
-                    final float startScale = getPakoogramTransitionStartScale();
-                    containerView.setAlpha(0f);
-                    containerView.setTranslationX(getPakoogramTransitionOffset());
-                    containerView.setScaleX(startScale);
-                    containerView.setScaleY(startScale);
+                    // Pakoogram: нижний экран всегда полностью виден; он лишь
+                    // возвращается из лёгкого сдвига -36dp и scale 0.95 → 1.0,
+                    // а закрывающийся верхний чат уезжает вправо и растворяется.
+                    pakoogramTransitionOpening = false;
+                    containerView.setAlpha(1f);
+                    containerView.setTranslationX(-dp(36));
+                    containerView.setScaleX(0.95f);
+                    containerView.setScaleY(0.95f);
                     containerViewBack.setAlpha(1f);
                     containerViewBack.setTranslationX(0f);
                     containerViewBack.setScaleX(1f);

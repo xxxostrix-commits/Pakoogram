@@ -54,13 +54,14 @@ public final class DreamGlassSurface {
         }
         final float opacity = clamp(opacityMultiplier, 0.15f, 0.95f);
 
-        // Слой 1. Матовая подложка: сверху воздушнее и светлее, снизу плотнее.
-        final float topBaseAlpha = isDark ? 0.58f : 0.54f;
-        final float bottomBaseAlpha = isDark ? 0.82f : 0.76f;
+        // Слой 1. Матовая подложка: мягкая и хорошо полупрозрачная, чтобы
+        // сквозь неё отчётливо просвечивали крупные облака.
+        final float topBaseAlpha = isDark ? 0.32f : 0.38f;
+        final float bottomBaseAlpha = isDark ? 0.48f : 0.54f;
         final int topAlpha = Math.min(255, Math.round(255f * topBaseAlpha * opacity));
         final int bottomAlpha = Math.min(255, Math.round(255f * bottomBaseAlpha * opacity));
-        final int topRgb = isDark ? 0x252A33 : 0xFFFFFF;
-        final int bottomRgb = isDark ? 0x12151B : 0xE9EEF6;
+        final int topRgb = isDark ? 0x38324C : 0xFFFFFF;
+        final int bottomRgb = isDark ? 0x1E1A2B : 0xEDF2FA;
         final int topColor = (topAlpha << 24) | topRgb;
         final int bottomColor = (bottomAlpha << 24) | bottomRgb;
 
@@ -78,9 +79,9 @@ public final class DreamGlassSurface {
         // Слой 3. Тонкий блик по краю: сверху слева ярче, снизу справа почти гаснет.
         paint.setShader(new LinearGradient(
                 rect.left, rect.top, rect.right, rect.bottom,
-                0x66FFFFFF, 0x0DFFFFFF, Shader.TileMode.CLAMP));
+                0x80FFFFFF, 0x14FFFFFF, Shader.TileMode.CLAMP));
         paint.setStyle(Paint.Style.STROKE);
-        paint.setStrokeWidth(AndroidUtilities.dpf2(1f));
+        paint.setStrokeWidth(AndroidUtilities.dpf2(1.3f));
         canvas.drawRoundRect(rect, cornerRadius, cornerRadius, paint);
     }
 

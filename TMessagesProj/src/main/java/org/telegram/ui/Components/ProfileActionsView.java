@@ -153,8 +153,8 @@ public class ProfileActionsView extends View {
     }
 
     /**
-     * Pakoogram: включает матовое стекло {@link DreamGlassSurface} под четырьмя
-     * основными кнопками профиля — «Чат», «Звук», «Звонок» и «Видео».
+     * Pakoogram: включает матовое стекло {@link DreamGlassSurface} под любыми
+     * кнопками профиля — в своём профиле, в каналах и в чужих профилях.
      */
     public void setPakoogramDreamGlass(boolean enabled) {
         if (pakoogramDreamGlass != enabled) {
@@ -163,9 +163,9 @@ public class ProfileActionsView extends View {
         }
     }
 
-    /** Pakoogram: кнопки, для которых рисуется матовое стекло DreamGlassSurface. */
+    /** Pakoogram: матовое стекло DreamGlassSurface рисуется под любой кнопкой профиля. */
     private static boolean isPakoogramDreamGlassAction(int key) {
-        return key == KEY_MESSAGE || key == KEY_NOTIFICATION || key == KEY_CALL || key == KEY_VIDEO;
+        return true;
     }
 
     private void drawGlass(Canvas canvas, RectF rect, float radius, float alpha, boolean dreamGlass) {
@@ -505,7 +505,7 @@ public class ProfileActionsView extends View {
     }
 
     public float getRoundRadius() {
-        return dp(16);
+        return dp(26);
     }
 
     private Action hit = null;
