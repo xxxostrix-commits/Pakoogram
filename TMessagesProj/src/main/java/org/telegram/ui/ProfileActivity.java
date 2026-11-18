@@ -94,6 +94,7 @@ import android.view.accessibility.AccessibilityNodeInfo;
 import android.view.animation.AccelerateInterpolator;
 import android.view.animation.DecelerateInterpolator;
 import android.view.animation.Interpolator;
+import android.view.animation.LinearInterpolator;
 import android.webkit.CookieManager;
 import android.webkit.WebStorage;
 import android.webkit.WebView;
@@ -378,6 +379,12 @@ public class ProfileActivity extends BaseFragment implements NotificationCenter.
     private float pakoogramScreenHaloCx = Float.NaN, pakoogramScreenHaloCy = Float.NaN;
     private float pakoogramScreenHaloRadius = -1f;
     private boolean pakoogramScreenHaloDark;
+    // Pakoogram: пиксель-арт облака, 24-секторная аура и стекло информационных карточек.
+    private float pakoogramDreamPhase;
+    private ValueAnimator pakoogramDreamAnimator;
+    private final RectF pakoogramInfoGlassRect = new RectF();
+    private final RectF pakoogramInfoGlassChildRect = new RectF();
+    private final RectF pakoogramInfoGlassListRect = new RectF();
     private RecyclerListView searchListView;
     private LinearLayoutManager layoutManager;
     private ListAdapter listAdapter;
@@ -3522,6 +3529,10 @@ public class ProfileActivity extends BaseFragment implements NotificationCenter.
                 // Pakoogram: градиент и ореол аватарки живут на самом нижнем слое экрана —
                 // под списком и шапкой, поэтому раскрывающееся фото их не перекрывает.
                 drawPakoogramScreenBackground(canvas);
+                // Pakoogram: пиксель-арт облака и 24-секторная аура аватарки.
+                drawPakoogramDreamLayer(canvas);
+                // Pakoogram: матовое стекло информационных карточек профиля.
+                drawPakoogramInfoGlass(canvas);
                 super.onDraw(canvas);
             }
 
@@ -4097,6 +4108,8 @@ public class ProfileActivity extends BaseFragment implements NotificationCenter.
             });
 
             actionsView = new ProfileActionsView(context, dp(74));
+            // Pakoogram: матовое стекло под кнопками «Чат / Звук / Звонок / Видео».
+            actionsView.setPakoogramDreamGlass(PakoogramConfig.isAdaptiveChatThemeEnabled());
             setActionsMode();
             updateNotifications(false);
 
@@ -10096,6 +10109,10 @@ public class ProfileActivity extends BaseFragment implements NotificationCenter.
             refreshPakoogramPalette();
             applyPakoogramProfilePalette();
         }
+        if (actionsView != null) {
+            actionsView.setPakoogramDreamGlass(PakoogramConfig.isAdaptiveChatThemeEnabled());
+        }
+        startPakoogramDreamAnimation();
         if (sharedMediaLayout != null) {
             sharedMediaLayout.onResume();
         }
@@ -10157,6 +10174,7 @@ public class ProfileActivity extends BaseFragment implements NotificationCenter.
         if (sharedMediaLayout != null) {
             sharedMediaLayout.onPause();
         }
+        stopPakoogramDreamAnimation();
     }
 
 
@@ -11007,6 +11025,132 @@ public class ProfileActivity extends BaseFragment implements NotificationCenter.
         pakoogramScreenHaloPaint.setShader(pakoogramScreenHaloGradient);
         canvas.drawCircle(cx, cy, radius, pakoogramScreenHaloPaint);
         pakoogramScreenHaloPaint.setShader(null);
+    }
+
+    /**
+     * Pakoogram: облака и круговое 24-секторное свечение вокруг аватарки.
+     *
+     * <p>Слой рисуется на самом низу {@code fragmentView}: облака распределены по
+     * всей высоте экрана, но не заходят в круг радиусом {@code radius * 1.65f}
+     * вокруг центра аватарки. Свечение строится по цветам битмапа
+     * {@code avatarImage} и «дышит» вместе с общей фазой анимации.</p>
+     */
+    private void drawPakoogramDreamLayer(Canvas canvas) {
+        if (!PakoogramConfig.isAdaptiveChatThemeEnabled() || fragmentView == null) {
+            return;
+        }
+        final int width = fragmentView.getMeasuredWidth();
+        final int height = fragmentView.getMeasuredHeight();
+        if (width <= 0 || height <= 0) {
+            return;
+        }
+        float cx = width * 0.5f;
+        float cy = 0f;
+        float avatarRadius = 0f;
+        if (avatarImage != null
+                && ViewPositionWatcher.computeRectInParent(avatarImage, fragmentView, pakoogramScreenAvatarRect)) {
+            final float avatarWidth = pakoogramScreenAvatarRect.width();
+            final float avatarHeight = pakoogramScreenAvatarRect.height();
+            if (avatarWidth > 0f && avatarHeight > 0f) {
+                cx = pakoogramScreenAvatarRect.centerX();
+                cy = pakoogramScreenAvatarRect.centerY();
+                avatarRadius = Math.min(avatarWidth, avatarHeight) * 0.5f;
+            }
+        }
+        DreamCloudsEngine.draw(canvas, width, height, cx, cy, avatarRadius,
+                pakoogramDreamPhase, Theme.isCurrentThemeDark());
+        if (avatarRadius <= 0f || avatarImage == null) {
+            return;
+        }
+        final Bitmap avatarBitmap = avatarImage.getImageReceiver().getBitmap();
+        final int[] sectors = AmbilightAvatarGlow.getSectors(getDialogId(), avatarBitmap);
+        AmbilightAvatarGlow.drawCircularProfileAura(canvas, cx, cy, avatarRadius,
+                avatarRadius * 0.62f, sectors, pakoogramDreamPhase);
+    }
+
+    /**
+     * Pakoogram: матовое стекло карточек информации профиля.
+     *
+     * <p>Прямоугольник собирается из видимых строк {@code infoStartRow..infoEndRow}
+     * и ограничивается границами списка. Стекло рисуется до детей {@code fragmentView},
+     * поэтому облака и свечение мягко просвечивают сквозь него, а текст остаётся сверху.</p>
+     */
+    private void drawPakoogramInfoGlass(Canvas canvas) {
+        if (!PakoogramConfig.isAdaptiveChatThemeEnabled() || listView == null || fragmentView == null
+                || listView.getVisibility() != View.VISIBLE) {
+            return;
+        }
+        final int firstRow = infoStartRow;
+        final int lastRow = infoEndRow;
+        if (firstRow < 0 || lastRow < firstRow) {
+            return;
+        }
+        if (!ViewPositionWatcher.computeRectInParent(listView, fragmentView, pakoogramInfoGlassListRect)) {
+            return;
+        }
+        boolean found = false;
+        final int childCount = listView.getChildCount();
+        for (int i = 0; i < childCount; i++) {
+            final View child = listView.getChildAt(i);
+            final int position = listView.getChildAdapterPosition(child);
+            if (position < firstRow || position > lastRow) {
+                continue;
+            }
+            if (!ViewPositionWatcher.computeRectInParent(child, fragmentView, pakoogramInfoGlassChildRect)) {
+                continue;
+            }
+            if (!found) {
+                pakoogramInfoGlassRect.set(pakoogramInfoGlassChildRect);
+                found = true;
+            } else {
+                pakoogramInfoGlassRect.union(pakoogramInfoGlassChildRect);
+            }
+        }
+        if (!found) {
+            return;
+        }
+        pakoogramInfoGlassRect.inset(dp(10), 0);
+        if (!pakoogramInfoGlassRect.intersect(pakoogramInfoGlassListRect)) {
+            return;
+        }
+        if (pakoogramInfoGlassRect.height() < dp(8)) {
+            return;
+        }
+        DreamGlassSurface.drawGlassCard(canvas, pakoogramInfoGlassRect, dp(18),
+                Theme.isCurrentThemeDark(), PakoogramConfig.glassOpacity);
+    }
+
+    /** Pakoogram: плавная фаза дрейфа облаков и дыхания ауры, полный цикл — 24 секунды. */
+    private void startPakoogramDreamAnimation() {
+        if (!PakoogramConfig.isAdaptiveChatThemeEnabled()) {
+            stopPakoogramDreamAnimation();
+            return;
+        }
+        if (pakoogramDreamAnimator != null) {
+            return;
+        }
+        final ValueAnimator animator = ValueAnimator.ofFloat(1f, 0f);
+        animator.setDuration(24000L);
+        animator.setRepeatCount(ValueAnimator.INFINITE);
+        animator.setRepeatMode(ValueAnimator.RESTART);
+        animator.setInterpolator(new LinearInterpolator());
+        animator.addUpdateListener(animation -> {
+            pakoogramDreamPhase = (float) animation.getAnimatedValue();
+            // Облака и аура живут на нижнем слое fragmentView: перерисовки только
+            // этого слоя достаточно, дети (список, шапка, кнопки) не пересоздаются.
+            if (fragmentView != null) {
+                fragmentView.invalidate();
+            }
+        });
+        animator.start();
+        pakoogramDreamAnimator = animator;
+    }
+
+    private void stopPakoogramDreamAnimation() {
+        if (pakoogramDreamAnimator != null) {
+            pakoogramDreamAnimator.cancel();
+            pakoogramDreamAnimator = null;
+        }
     }
 
     /**

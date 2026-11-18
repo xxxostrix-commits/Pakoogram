@@ -50,6 +50,11 @@ public class PakoogramConfig {
     public static final boolean DEFAULT_FLOATING_PANELS = true;
     public static final boolean DEFAULT_GHOST_MODE = false;
     public static final boolean DEFAULT_GLASS_CHAT_CARDS = true;
+    /**
+     * Прозрачность матовой стеклянной подложки карточки чата в списке диалогов.
+     * Значение передаётся в {@link DreamGlassSurface#drawGlassCard}.
+     */
+    public static final float glassOpacity = 0.72f;
     public static final int DEFAULT_CHAT_CARD_GRADIENT_INTENSITY = 100;
     public static final int DEFAULT_CHAT_CARD_CORNER_RADIUS = 16;
     public static final boolean DEFAULT_ADAPTIVE_CHAT_THEME = true;
@@ -305,6 +310,15 @@ public class PakoogramConfig {
     public static int getAvatarGlowBrightness() {
         return clamp(getPreferences().getInt(KEY_AVATAR_GLOW_BRIGHTNESS, DEFAULT_AVATAR_GLOW_BRIGHTNESS),
                 MIN_AVATAR_GLOW_BRIGHTNESS, MAX_AVATAR_GLOW_BRIGHTNESS);
+    }
+
+    /**
+     * Сила градиентного свечения карточки чата в диапазоне {@code 0..1}.
+     * Является производной от настройки яркости свечения аватарки, поэтому
+     * ползунок «Яркость свечения аватарки» управляет и карточками диалогов.
+     */
+    public static float avatarGlowIntensity() {
+        return getAvatarGlowBrightness() / 100f;
     }
 
     /** @param value процент яркости, зажимается в [{@value #MIN_AVATAR_GLOW_BRIGHTNESS}; {@value #MAX_AVATAR_GLOW_BRIGHTNESS}] */

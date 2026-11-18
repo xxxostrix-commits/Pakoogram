@@ -44,6 +44,8 @@ import org.telegram.messenger.Utilities;
 import org.telegram.ui.ActionBar.Theme;
 import org.telegram.ui.Cells.ChatMessageCell;
 import org.telegram.ui.Components.blur3.BlurredBackgroundDrawableViewFactory;
+import org.telegram.ui.DreamGlassSurface;
+import org.telegram.ui.PakoogramConfig;
 import org.telegram.ui.Components.blur3.drawable.BlurredBackgroundDrawable;
 
 import java.util.ArrayList;
@@ -68,6 +70,8 @@ public class ProfileActionsView extends View {
     private BlurredBackgroundDrawableViewFactory glassFactory;
     private final ArrayList<BlurredBackgroundDrawable> glass = new ArrayList<>();
     private int glassUsed;
+    /** Pakoogram: матовое стекло для кнопок «Чат / Звук / Звонок / Видео». */
+    private boolean pakoogramDreamGlass;
 
     private int activeCount = 0;
     private final int targetHeight;
@@ -148,7 +152,38 @@ public class ProfileActionsView extends View {
         invalidate();
     }
 
-    private void drawGlass(Canvas canvas, RectF rect, float radius, float alpha) {
+    /**
+     * Pakoogram: включает матовое стекло {@link DreamGlassSurface} под четырьмя
+     * основными кнопками профиля — «Чат», «Звук», «Звонок» и «Видео».
+     */
+    public void setPakoogramDreamGlass(boolean enabled) {
+        if (pakoogramDreamGlass != enabled) {
+            pakoogramDreamGlass = enabled;
+            invalidate();
+        }
+    }
+
+    /** Pakoogram: кнопки, для которых рисуется матовое стекло DreamGlassSurface. */
+    private static boolean isPakoogramDreamGlassAction(int key) {
+        return key == KEY_MESSAGE || key == KEY_NOTIFICATION || key == KEY_CALL || key == KEY_VIDEO;
+    }
+
+    private void drawGlass(Canvas canvas, RectF rect, float radius, float alpha, boolean dreamGlass) {
+        if (dreamGlass) {
+            if (alpha <= 0.01f) {
+                return;
+            }
+            // Свечение и облака мягко просвечивают сквозь матовую подложку,
+            // а альфа слоя повторяет штатное появление кнопок.
+            final int layer = canvas.saveLayerAlpha(rect, Math.min(255, Math.round(0xFF * alpha)), Canvas.ALL_SAVE_FLAG);
+            DreamGlassSurface.drawGlassCard(canvas, rect, radius,
+                    Theme.isCurrentThemeDark(), PakoogramConfig.glassOpacity);
+            canvas.restoreToCount(layer);
+            return;
+        }
+        if (glassFactory == null) {
+            return;
+        }
         if (glassUsed == glass.size()) {
             glass.add(glassFactory.create(this, ProfileButtonsGlass.NO_COLORS).setRadius(radius));
         }
@@ -303,8 +338,9 @@ public class ProfileActionsView extends View {
                 action.rect.width() / 2.0f * (1.0f - action.getScale()),
                 action.rect.height() / 2.0f * (1.0f - action.getScale())
             );
-            if (glassFactory != null) {
-                drawGlass(canvas, AndroidUtilities.rectTmp, r, action.getAlpha() * alphaFraction1);
+            final boolean dreamGlass = pakoogramDreamGlass && isPakoogramDreamGlassAction(action.key);
+            if (glassFactory != null || dreamGlass) {
+                drawGlass(canvas, AndroidUtilities.rectTmp, r, action.getAlpha() * alphaFraction1, dreamGlass);
                 continue;
             }
             int wasAlpha = paint.getAlpha();

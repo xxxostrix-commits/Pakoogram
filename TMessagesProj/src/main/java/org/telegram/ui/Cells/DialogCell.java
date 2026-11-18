@@ -132,7 +132,9 @@ import org.telegram.ui.Components.URLSpanNoUnderlineBold;
 import org.telegram.ui.Components.VectorAvatarThumbDrawable;
 import org.telegram.ui.Components.dialogs.DialogMediaIconsHelper;
 import org.telegram.ui.Components.spoilers.SpoilerEffect;
+import org.telegram.ui.AmbilightAvatarGlow;
 import org.telegram.ui.DialogsActivity;
+import org.telegram.ui.DreamGlassSurface;
 import org.telegram.ui.FilterCreateActivity;
 import org.telegram.ui.PakoogramConfig;
 import org.telegram.ui.RightSlidingDialogContainer;
@@ -4060,20 +4062,17 @@ public class DialogCell extends BaseCell implements StoriesListPlaceProvider.Ava
     /**
      * Pakoogram: рисует «стеклянную» карточку диалога.
      *
-     * <p>Порядок слоёв: базовый тёмный/светлый фон карточки → горизонтальный градиент
-     * слева направо ({@code x0 = левый край}, {@code x1 = правый край}) с акцентным цветом
-     * чата (альфа 0.38 → 0.10 → 0.0 в тёмной теме и 0.22 → 0.10 → 0.0 в светлой) → тонкий
-     * световой блик по контуру. Вызывается из {@link #onDraw(Canvas)} до аватарки и текста,
-     * поэтому карточка всегда остаётся под содержимым ячейки.</p>
+     * <p>Порядок слоёв: матовая стеклянная подложка {@link DreamGlassSurface} → насыщенное
+     * 24-секторное сияние {@link AmbilightAvatarGlow} из цветов аватарки, которое плавно
+     * затухает слева направо → тонкий световой блик по контуру. Вызывается из
+     * {@link #onDraw(Canvas)} до аватарки и текста, поэтому карточка всегда остаётся
+     * под содержимым ячейки.</p>
      */
     private void drawPakoogramCard(Canvas canvas) {
         if (!PakoogramConfig.isGlassChatCardsEnabled() || translationX != 0) {
             return;
         }
         final int color = getPakoogramTintColor();
-        if (color == 0) {
-            return;
-        }
         final float insetHorizontal = dp(PAKOGRAM_CARD_MARGIN_HORIZONTAL);
         final float insetVertical = dpf2(PAKOGRAM_CARD_MARGIN_VERTICAL);
         pakoogramCardRect.set(
@@ -4089,21 +4088,16 @@ public class DialogCell extends BaseCell implements StoriesListPlaceProvider.Ava
         final PakoogramAvatarPalette.PaletteData palette = pakoogramPalette;
         ensurePakoogramCardShaders(palette, color, intensity, radius, dark);
 
-        // 1. Базовый тёмный/светлый фон карточки (AMOLED #050505, монохром #6E7681).
-        pakoogramCardPaint.setShader(null);
-        pakoogramCardPaint.setStyle(Paint.Style.FILL);
-        if (palette != null) {
-            pakoogramCardPaint.setColor(palette.getDialogCardColor(dark));
-        } else {
-            pakoogramCardPaint.setColor(Theme.getColor(Theme.key_windowBackgroundWhite, resourcesProvider));
-            pakoogramCardPaint.setAlpha(dark ? PAKOGRAM_CARD_BACKGROUND_ALPHA : 0x4D);
-        }
-        canvas.drawRoundRect(pakoogramCardRect, radius, radius, pakoogramCardPaint);
+        // 1. Матовая стеклянная подложка карточки.
+        DreamGlassSurface.drawGlassCard(canvas, pakoogramCardRect, radius, dark,
+                PakoogramConfig.glassOpacity);
 
-        // 2. Горизонтальный градиент акцентного цвета чата: ярко слева → растворение справа.
-        if (intensity > 0) {
-            canvas.drawRoundRect(pakoogramCardRect, radius, radius, pakoogramCardGradientPaint);
-        }
+        // 2. Насыщенное 24-секторное сияние из цветов аватарки: ярко слева,
+        // плавно затухает вправо, поэтому текст справа остаётся читаемым.
+        final int[] sectors24 = AmbilightAvatarGlow.getSectors(
+                currentDialogId, avatarImage != null ? avatarImage.getBitmap() : null);
+        AmbilightAvatarGlow.drawCardLeftToRightGlow(canvas, pakoogramCardRect, radius,
+                sectors24, PakoogramConfig.avatarGlowIntensity());
 
         // 3. Тонкий стеклянный блик по контуру карточки.
         final float strokeWidth = Math.max(1f, dpf2(PAKOGRAM_CARD_STROKE_WIDTH));

@@ -77,6 +77,7 @@ import org.telegram.ui.Components.AnimatedFloat;
 import org.telegram.ui.Components.BackButtonMenu;
 import org.telegram.ui.EmptyBaseFragment;
 import org.telegram.ui.MainTabsActivity;
+import org.telegram.ui.PakoogramConfig;
 import org.telegram.ui.bots.BotWebViewSheet;
 import org.telegram.ui.Components.Bulletin;
 import org.telegram.ui.Components.ChatAttachAlert;
@@ -760,6 +761,12 @@ public class ActionBarLayout extends FrameLayout implements INavigationLayout, F
     private boolean rebuildLastAfterAnimation;
     private boolean showLastAfterAnimation;
     private long transitionAnimationStartTime;
+    /** Pakoogram: стартовый сдвиг экрана при открытии/закрытии чата (доля ширины). */
+    private static final float PAKOGRAM_TRANSITION_OFFSET_FACTOR = 0.22f;
+    /** Pakoogram: стартовый масштаб экрана при открытии/закрытии чата. */
+    private static final float PAKOGRAM_TRANSITION_START_SCALE = 0.96f;
+    /** Pakoogram: длительность анимации открытия/закрытия чата. */
+    private static final long PAKOGRAM_TRANSITION_DURATION = 240L;
     private boolean inActionMode;
     private int startedTrackingPointerId;
     private Runnable onCloseAnimationEndRunnable;
@@ -1836,6 +1843,18 @@ public class ActionBarLayout extends FrameLayout implements INavigationLayout, F
             animationRunnable = null;
         }
         setAlpha(1.0f);
+        if (containerView != null) {
+            containerView.setAlpha(1f);
+            containerView.setTranslationX(0);
+            containerView.setScaleX(1f);
+            containerView.setScaleY(1f);
+        }
+        if (containerViewBack != null) {
+            containerViewBack.setAlpha(1f);
+            containerViewBack.setTranslationX(0);
+            containerViewBack.setScaleX(1f);
+            containerViewBack.setScaleY(1f);
+        }
         if (wasOpening && !previewTransition && !startedTracking && containerViewBack != null) {
             // Нижний слой после открытия экрана больше не нужен: пока он видим, он участвует
             // в layout и может оставлять остаточный кадр.
@@ -1923,6 +1942,25 @@ public class ActionBarLayout extends FrameLayout implements INavigationLayout, F
         containerViewBack.setVisibility(View.INVISIBLE);
     }
 
+    /** Pakoogram: включены ли мягкие переходы ColorOS в настройках форка. */
+    private boolean isPakoogramTransitionEnabled() {
+        return PakoogramConfig.isTransitionAnimationsEnabled();
+    }
+
+    /** Pakoogram: стартовый горизонтальный сдвиг входящего экрана. */
+    private float getPakoogramTransitionOffset() {
+        if (!isPakoogramTransitionEnabled()) {
+            return dp(48);
+        }
+        final int width = getWidth() > 0 ? getWidth() : AndroidUtilities.displaySize.x;
+        return width * PAKOGRAM_TRANSITION_OFFSET_FACTOR;
+    }
+
+    /** Pakoogram: стартовый масштаб входящего экрана. */
+    private float getPakoogramTransitionStartScale() {
+        return isPakoogramTransitionEnabled() ? PAKOGRAM_TRANSITION_START_SCALE : 1f;
+    }
+
     private void startLayoutAnimation(final boolean open, final boolean first, final boolean preview) {
         if (first) {
             animationProgress = 0.0f;
@@ -1946,7 +1984,9 @@ public class ActionBarLayout extends FrameLayout implements INavigationLayout, F
                     dt = 18;
                 }
                 lastFrameTime = newTime;
-                float duration = preview && open ? 190.0f : 150.0f;
+                final boolean pakoogramTransition = !preview && isPakoogramTransitionEnabled();
+                float duration = preview && open ? 190.0f
+                        : (pakoogramTransition ? PAKOGRAM_TRANSITION_DURATION : 150.0f);
                 animationProgress += dt / duration;
                 if (animationProgress > 1.0f) {
                     animationProgress = 1.0f;
@@ -2008,7 +2048,14 @@ public class ActionBarLayout extends FrameLayout implements INavigationLayout, F
                         containerView.invalidate();
                         invalidate();
                     } else {
-                        containerView.setTranslationX(dp(48) * (1.0f - interpolated));
+                        // Pakoogram: входящий чат мягко выезжает слева направо,
+                        // одновременно проявляясь и увеличиваясь с 0.96 до 1.0.
+                        final float offset = pakoogramTransition ? getPakoogramTransitionOffset() : dp(48);
+                        final float startScale = pakoogramTransition ? PAKOGRAM_TRANSITION_START_SCALE : 1f;
+                        containerView.setTranslationX(offset * (1.0f - interpolated));
+                        final float scale = startScale + (1f - startScale) * interpolated;
+                        containerView.setScaleX(scale);
+                        containerView.setScaleY(scale);
                     }
                 } else {
                     float clampedReverseInterpolated = MathUtils.clamp(1f - interpolated, 0, 1);
@@ -2023,7 +2070,22 @@ public class ActionBarLayout extends FrameLayout implements INavigationLayout, F
                         containerView.invalidate();
                         invalidate();
                     } else {
-                        containerViewBack.setTranslationX(dp(48) * interpolated);
+                        // Pakoogram: при закрытии предыдущий экран возвращается тем же
+                        // движением 0.22 ширины → 0, alpha 0 → 1, scale 0.96 → 1.0.
+                        final float offset = pakoogramTransition ? getPakoogramTransitionOffset() : dp(48);
+                        if (pakoogramTransition) {
+                            final float startScale = PAKOGRAM_TRANSITION_START_SCALE;
+                            containerView.setAlpha(MathUtils.clamp(interpolated, 0, 1));
+                            containerView.setTranslationX(offset * (1.0f - interpolated));
+                            final float incomingScale = startScale + (1f - startScale) * interpolated;
+                            containerView.setScaleX(incomingScale);
+                            containerView.setScaleY(incomingScale);
+
+                            final float outgoingScale = startScale + (1f - startScale) * (1.0f - interpolated);
+                            containerViewBack.setScaleX(outgoingScale);
+                            containerViewBack.setScaleY(outgoingScale);
+                        }
+                        containerViewBack.setTranslationX(offset * interpolated);
                     }
                 }
                 if (animationProgress < 1) {
@@ -2308,7 +2370,10 @@ public class ActionBarLayout extends FrameLayout implements INavigationLayout, F
                         containerView.setScaleY(1.0f);
                     } else {
                         presentFragmentInternalRemoveOld(removeLast, currentFragment);
+                        containerView.setAlpha(1f);
                         containerView.setTranslationX(0);
+                        containerView.setScaleX(1.0f);
+                        containerView.setScaleY(1.0f);
                     }
                     if (currentFragment != null) {
                         currentFragment.onTransitionAnimationEnd(false, false);
@@ -2338,9 +2403,10 @@ public class ActionBarLayout extends FrameLayout implements INavigationLayout, F
                         containerView.setScaleX(0.9f);
                         containerView.setScaleY(0.9f);
                     } else {
-                        containerView.setTranslationX(48.0f);
-                        containerView.setScaleX(1.0f);
-                        containerView.setScaleY(1.0f);
+                        containerView.setTranslationX(getPakoogramTransitionOffset());
+                        final float startScale = getPakoogramTransitionStartScale();
+                        containerView.setScaleX(startScale);
+                        containerView.setScaleY(startScale);
                     }
                     if (containerView.isKeyboardVisible || containerViewBack.isKeyboardVisible) {
                         if (currentFragment != null && !preview) {
@@ -2752,6 +2818,19 @@ public class ActionBarLayout extends FrameLayout implements INavigationLayout, F
                 transitionAnimationStartTime = System.currentTimeMillis();
                 transitionAnimationInProgress = true;
                 layoutToIgnore = containerView;
+                if (!inPreviewMode && !transitionAnimationPreviewMode && isPakoogramTransitionEnabled()) {
+                    // Pakoogram: подготавливаем предыдущий экран к тому же мягкому
+                    // возвращению 0.22 ширины → 0, alpha 0 → 1, scale 0.96 → 1.0.
+                    final float startScale = getPakoogramTransitionStartScale();
+                    containerView.setAlpha(0f);
+                    containerView.setTranslationX(getPakoogramTransitionOffset());
+                    containerView.setScaleX(startScale);
+                    containerView.setScaleY(startScale);
+                    containerViewBack.setAlpha(1f);
+                    containerViewBack.setTranslationX(0f);
+                    containerViewBack.setScaleX(1f);
+                    containerViewBack.setScaleY(1f);
+                }
                 final BaseFragment previousFragmentFinal = previousFragment;
                 currentFragment.setRemovingFromStack(true);
                 onCloseAnimationEndRunnable = () -> {
@@ -2772,7 +2851,14 @@ public class ActionBarLayout extends FrameLayout implements INavigationLayout, F
                         previewMenu = null;
                         transitionAnimationPreviewMode = false;
                     } else {
+                        containerView.setAlpha(1f);
+                        containerView.setTranslationX(0);
+                        containerView.setScaleX(1f);
+                        containerView.setScaleY(1f);
+                        containerViewBack.setAlpha(1f);
                         containerViewBack.setTranslationX(0);
+                        containerViewBack.setScaleX(1f);
+                        containerViewBack.setScaleY(1f);
                     }
                     closeLastFragmentInternalRemoveOld(currentFragment);
                     currentFragment.setRemovingFromStack(false);
