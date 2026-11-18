@@ -4064,8 +4064,8 @@ public class DialogCell extends BaseCell implements StoriesListPlaceProvider.Ava
      *
      * <p>Порядок слоёв: матовая стеклянная подложка {@link DreamGlassSurface} → насыщенное
      * 24-секторное сияние {@link AmbilightAvatarGlow} из цветов аватарки, которое плавно
-     * затухает слева направо → тонкий световой блик по контуру. Вызывается из
-     * {@link #onDraw(Canvas)} до аватарки и текста, поэтому карточка всегда остаётся
+     * затухает слева направо. Белой/светлой обводки по контуру карточки нет. Вызывается
+     * из {@link #onDraw(Canvas)} до аватарки и текста, поэтому карточка всегда остаётся
      * под содержимым ячейки.</p>
      */
     private void drawPakoogramCard(Canvas canvas) {
@@ -4098,13 +4098,6 @@ public class DialogCell extends BaseCell implements StoriesListPlaceProvider.Ava
                 currentDialogId, avatarImage != null ? avatarImage.getBitmap() : null);
         AmbilightAvatarGlow.drawCardLeftToRightGlow(canvas, pakoogramCardRect, radius,
                 sectors24, PakoogramConfig.avatarGlowIntensity());
-
-        // 3. Тонкий стеклянный блик по контуру карточки.
-        final float strokeWidth = Math.max(1f, dpf2(PAKOGRAM_CARD_STROKE_WIDTH));
-        pakoogramCardStrokeRect.set(pakoogramCardRect);
-        pakoogramCardStrokeRect.inset(strokeWidth / 2f, strokeWidth / 2f);
-        final float strokeRadius = Math.max(0f, radius - strokeWidth / 2f);
-        canvas.drawRoundRect(pakoogramCardStrokeRect, strokeRadius, strokeRadius, pakoogramCardStrokePaint);
     }
 
     @SuppressLint("DrawAllocation")

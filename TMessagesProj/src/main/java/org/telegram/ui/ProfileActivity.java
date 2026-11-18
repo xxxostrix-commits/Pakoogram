@@ -389,6 +389,10 @@ public class ProfileActivity extends BaseFragment implements NotificationCenter.
     private final RectF pakoogramInfoGlassListRect = new RectF();
     /** Pakoogram: строки, которые объединяются в стеклянные карточки, по возрастанию. */
     private final TreeSet<Integer> pakoogramInfoGlassRows = new TreeSet<>();
+    /** Pakoogram: уменьшенный кадр фона для настоящего размытия под карточками. */
+    private static final int PAKOGRAM_BLUR_SCALE = 8;
+    private Bitmap pakoogramBlurBitmap;
+    private Canvas pakoogramBlurCanvas;
     private RecyclerListView searchListView;
     private LinearLayoutManager layoutManager;
     private ListAdapter listAdapter;
@@ -3530,13 +3534,26 @@ public class ProfileActivity extends BaseFragment implements NotificationCenter.
 
             @Override
             protected void onDraw(Canvas canvas) {
+                // Pakoogram: слои фона гаснут вместе со списком при закрытии профиля.
+                final int pakoogramAlpha = listView != null
+                        ? Math.max(0, Math.min(255, Math.round(255f * listView.getAlpha())))
+                        : 255;
+                final boolean fadePakoogram = pakoogramAlpha < 255;
+                final int pakoogramLayer = fadePakoogram
+                        ? canvas.saveLayerAlpha(null, pakoogramAlpha, Canvas.ALL_SAVE_FLAG)
+                        : -1;
                 // Pakoogram: градиент и ореол аватарки живут на самом нижнем слое экрана —
                 // под списком и шапкой, поэтому раскрывающееся фото их не перекрывает.
                 drawPakoogramScreenBackground(canvas);
                 // Pakoogram: пиксель-арт облака и 24-секторная аура аватарки.
                 drawPakoogramDreamLayer(canvas);
+                // Pakoogram: уменьшенный размытый снимок этих же слоёв для стекла.
+                updatePakoogramBlurBuffer();
                 // Pakoogram: матовое стекло информационных карточек профиля.
                 drawPakoogramInfoGlass(canvas);
+                if (fadePakoogram) {
+                    canvas.restoreToCount(pakoogramLayer);
+                }
                 super.onDraw(canvas);
             }
 
@@ -11188,14 +11205,52 @@ public class ProfileActivity extends BaseFragment implements NotificationCenter.
         }
         // Горизонтальный отступ и максимальное скругление углов капсулы.
         pakoogramInfoGlassRect.inset(dp(14), dp(2));
-        if (!pakoogramInfoGlassRect.intersect(pakoogramInfoGlassListRect)) {
-            return;
-        }
         if (pakoogramInfoGlassRect.height() < dp(8)) {
             return;
         }
-        DreamGlassSurface.drawGlassCard(canvas, pakoogramInfoGlassRect, dp(32),
-                Theme.isCurrentThemeDark(), PakoogramConfig.glassOpacity);
+        DreamGlassSurface.drawFrostedGlassCard(canvas, pakoogramInfoGlassRect, dp(32),
+                Theme.isCurrentThemeDark(), PakoogramConfig.glassOpacity,
+                pakoogramBlurBitmap, fragmentView.getMeasuredWidth(),
+                fragmentView.getMeasuredHeight());
+    }
+
+    /**
+     * Pakoogram: рендерит градиент и облака профиля в уменьшенный в
+     * {@link #PAKOGRAM_BLUR_SCALE} раз буфер и размывает его нативно.
+     * Этот кадр используют карточки и кнопки профиля как настоящее размытие.
+     */
+    private void updatePakoogramBlurBuffer() {
+        if (!PakoogramConfig.isAdaptiveChatThemeEnabled() || fragmentView == null
+                || listView == null || listView.getVisibility() != View.VISIBLE) {
+            return;
+        }
+        final int width = fragmentView.getMeasuredWidth();
+        final int height = fragmentView.getMeasuredHeight();
+        if (width <= 0 || height <= 0) {
+            return;
+        }
+        final int blurWidth = Math.max(1, width / PAKOGRAM_BLUR_SCALE);
+        final int blurHeight = Math.max(1, height / PAKOGRAM_BLUR_SCALE);
+        if (pakoogramBlurBitmap == null || pakoogramBlurBitmap.isRecycled()
+                || pakoogramBlurBitmap.getWidth() != blurWidth
+                || pakoogramBlurBitmap.getHeight() != blurHeight) {
+            if (pakoogramBlurBitmap != null) {
+                pakoogramBlurBitmap.recycle();
+            }
+            pakoogramBlurBitmap = Bitmap.createBitmap(blurWidth, blurHeight,
+                    Bitmap.Config.ARGB_8888);
+            pakoogramBlurCanvas = new Canvas(pakoogramBlurBitmap);
+        }
+        pakoogramBlurCanvas.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR);
+        final int saveCount = pakoogramBlurCanvas.save();
+        pakoogramBlurCanvas.scale(1f / PAKOGRAM_BLUR_SCALE, 1f / PAKOGRAM_BLUR_SCALE);
+        drawPakoogramScreenBackground(pakoogramBlurCanvas);
+        drawPakoogramDreamLayer(pakoogramBlurCanvas);
+        pakoogramBlurCanvas.restoreToCount(saveCount);
+        Utilities.stackBlurBitmap(pakoogramBlurBitmap, 10);
+        if (actionsView != null) {
+            actionsView.setPakoogramBlurBackground(pakoogramBlurBitmap, width, height);
+        }
     }
 
     /** Pakoogram: плавная фаза дрейфа облаков и дыхания ауры, полный цикл — 14 секунд. */

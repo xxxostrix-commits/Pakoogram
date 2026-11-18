@@ -6,6 +6,7 @@ import static org.telegram.messenger.LocaleController.getString;
 
 import android.annotation.SuppressLint;
 import android.content.Context;
+import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.ColorFilter;
@@ -72,6 +73,13 @@ public class ProfileActionsView extends View {
     private int glassUsed;
     /** Pakoogram: матовое стекло для кнопок «Чат / Звук / Звонок / Видео». */
     private boolean pakoogramDreamGlass;
+    /** Pakoogram: размытый кадр фона профиля, который просвечивает под кнопками. */
+    @Nullable
+    private Bitmap pakoogramBlurBitmap;
+    private int pakoogramBlurWidth;
+    private int pakoogramBlurHeight;
+    private final RectF pakoogramBlurRect = new RectF();
+    private final int[] pakoogramBlurLocation = new int[2];
 
     private int activeCount = 0;
     private final int targetHeight;
@@ -163,6 +171,24 @@ public class ProfileActionsView extends View {
         }
     }
 
+    /**
+     * Pakoogram: передаёт уменьшенный размытый кадр экрана профиля. Кнопки
+     * обрезают его своими скруглёнными прямоугольниками, поэтому под ними
+     * видны по-настоящему размытые облака и аура.
+     */
+    public void setPakoogramBlurBackground(@Nullable Bitmap bitmap,
+                                          int screenWidth, int screenHeight) {
+        if (pakoogramBlurBitmap == bitmap
+                && pakoogramBlurWidth == screenWidth
+                && pakoogramBlurHeight == screenHeight) {
+            return;
+        }
+        pakoogramBlurBitmap = bitmap;
+        pakoogramBlurWidth = screenWidth;
+        pakoogramBlurHeight = screenHeight;
+        invalidate();
+    }
+
     /** Pakoogram: матовое стекло DreamGlassSurface рисуется под любой кнопкой профиля. */
     private static boolean isPakoogramDreamGlassAction(int key) {
         return true;
@@ -174,10 +200,26 @@ public class ProfileActionsView extends View {
                 return;
             }
             // Свечение и облака мягко просвечивают сквозь матовую подложку,
-            // а альфа слоя повторяет штатное появление кнопок.
+            // а альфа слоя повторяет штатное появление кнопок. Белой окантовки нет.
             final int layer = canvas.saveLayerAlpha(rect, Math.min(255, Math.round(0xFF * alpha)), Canvas.ALL_SAVE_FLAG);
-            DreamGlassSurface.drawGlassCard(canvas, rect, radius,
-                    Theme.isCurrentThemeDark(), PakoogramConfig.glassOpacity);
+            if (pakoogramBlurBitmap != null && !pakoogramBlurBitmap.isRecycled()
+                    && pakoogramBlurWidth > 0 && pakoogramBlurHeight > 0) {
+                // Размытый кадр снят в координатах экрана: переводим canvas в них,
+                // чтобы под кнопкой оказался именно её участок облаков и ауры.
+                getLocationInWindow(pakoogramBlurLocation);
+                canvas.save();
+                canvas.translate(-pakoogramBlurLocation[0], -pakoogramBlurLocation[1]);
+                pakoogramBlurRect.set(rect);
+                pakoogramBlurRect.offset(pakoogramBlurLocation[0], pakoogramBlurLocation[1]);
+                DreamGlassSurface.drawFrostedGlassCard(canvas, pakoogramBlurRect, radius,
+                        Theme.isCurrentThemeDark(), PakoogramConfig.glassOpacity,
+                        pakoogramBlurBitmap, pakoogramBlurWidth, pakoogramBlurHeight);
+                canvas.restore();
+            } else {
+                DreamGlassSurface.drawFrostedGlassCard(canvas, rect, radius,
+                        Theme.isCurrentThemeDark(), PakoogramConfig.glassOpacity,
+                        null, 0, 0);
+            }
             canvas.restoreToCount(layer);
             return;
         }
