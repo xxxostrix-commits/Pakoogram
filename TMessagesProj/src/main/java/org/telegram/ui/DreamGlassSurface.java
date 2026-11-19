@@ -1,10 +1,8 @@
 package org.telegram.ui;
 
 import android.graphics.Bitmap;
-import android.graphics.BitmapShader;
 import android.graphics.Canvas;
-import android.graphics.LinearGradient;
-import android.graphics.Matrix;
+import android.graphics.Color;
 import android.graphics.Paint;
 import android.graphics.Path;
 import android.graphics.RectF;
@@ -17,24 +15,15 @@ import androidx.annotation.RequiresApi;
 
 import org.telegram.messenger.AndroidUtilities;
 
-import java.util.Random;
-
 /**
  * Pakoogram: изолированная отрисовка «стеклянных» карточек.
  *
- * <p>Карточка собирается из матовой подложки с вертикальным градиентом,
- * опционального настоящего размытия фона и процедурного зерна. Класс не зависит
- * от темы конкретного экрана — цвет и прозрачность передаются снаружи.</p>
+ * <p>Карточка собирается из чистой полупрозрачной заливки и опционального
+ * настоящего размытия фона. Класс не зависит от темы конкретного экрана —
+ * цвет и прозрачность передаются снаружи.</p>
  */
 public final class DreamGlassSurface {
 
-    /** Размер тайла процедурного зерна. */
-    private static final int GRAIN_SIZE = 32;
-    /** Альфа зерна: заметно только как «матовость», не как шум. */
-    private static final int GRAIN_ALPHA = 11;
-
-    private static Bitmap grainBitmap;
-    private static BitmapShader grainShader;
     /** Временный прямоугольник для растягивания размытого фона на весь экран. */
     private static final RectF screenRectTmp = new RectF();
 
@@ -61,7 +50,7 @@ public final class DreamGlassSurface {
      *
      * <p>Область карточки обрезается скруглённым {@link Path}. Внутри неё
      * растягивается уменьшенный размытый кадр экрана, поверх которого лежит
-     * плотная дымка и процедурное зерно. Никакой белой обводки нет.</p>
+     * чистая полупрозрачная заливка без обводки и зерна.</p>
      *
      * @param rect                прямоугольник карточки
      * @param cornerRadius        радиус скругления
@@ -79,17 +68,6 @@ public final class DreamGlassSurface {
             return;
         }
         final float opacity = clamp(opacityMultiplier, 0.15f, 0.95f);
-
-        // Плотная матовая дымка: под карточкой остаются различимыми только
-        // мягкие пятна облаков и ауры.
-        final float topBaseAlpha = isDark ? 0.56f : 0.62f;
-        final float bottomBaseAlpha = isDark ? 0.68f : 0.74f;
-        final int topAlpha = Math.min(255, Math.round(255f * topBaseAlpha * opacity));
-        final int bottomAlpha = Math.min(255, Math.round(255f * bottomBaseAlpha * opacity));
-        final int topRgb = isDark ? 0x2A2638 : 0xF5F8FF;
-        final int bottomRgb = isDark ? 0x1B1826 : 0xE6EEF8;
-        final int topColor = (topAlpha << 24) | topRgb;
-        final int bottomColor = (bottomAlpha << 24) | bottomRgb;
 
         final int saveCount = canvas.save();
         final Path clip = new Path();
@@ -109,13 +87,13 @@ public final class DreamGlassSurface {
             paint.setFilterBitmap(false);
         }
 
-        paint.setShader(new LinearGradient(
-                rect.left, rect.top, rect.left, rect.bottom,
-                topColor, bottomColor, Shader.TileMode.CLAMP));
-        canvas.drawRect(rect, paint);
-
-        // Текстура матового зерна поверх дымки.
-        paint.setShader(grainShader());
+        // Чистая полупрозрачная заливка поверх размытия: без градиента,
+        // белой обводки и процедурного зерна.
+        final int fillColor = isDark
+                ? Color.argb(Math.round(135 * opacity), 26, 28, 36)
+                : Color.argb(Math.round(155 * opacity), 255, 255, 255);
+        paint.setShader(null);
+        paint.setColor(fillColor);
         canvas.drawRect(rect, paint);
         canvas.restoreToCount(saveCount);
     }
@@ -144,34 +122,6 @@ public final class DreamGlassSurface {
         }
         final float radius = AndroidUtilities.dpf2(radiusDp);
         target.setRenderEffect(RenderEffect.createBlurEffect(radius, radius, Shader.TileMode.CLAMP));
-    }
-
-    /* ---------------------------------------------------------------- зерно */
-
-    private static BitmapShader grainShader() {
-        if (grainShader == null) {
-            if (grainBitmap == null) {
-                grainBitmap = createGrainBitmap();
-            }
-            grainShader = new BitmapShader(grainBitmap, Shader.TileMode.REPEAT, Shader.TileMode.REPEAT);
-            // Тайл 32×32 должен выглядеть одинаково на экранах любой плотности.
-            final Matrix matrix = new Matrix();
-            final float scale = Math.max(1f, AndroidUtilities.density);
-            matrix.setScale(scale, scale);
-            grainShader.setLocalMatrix(matrix);
-        }
-        return grainShader;
-    }
-
-    private static Bitmap createGrainBitmap() {
-        final int[] pixels = new int[GRAIN_SIZE * GRAIN_SIZE];
-        final Random random = new Random(0x5EEDF00DL);
-        for (int i = 0; i < pixels.length; i++) {
-            final int value = random.nextInt(256);
-            // Фиксированная альфа 11 и случайная яркость дают мягкое монохромное зерно.
-            pixels[i] = (GRAIN_ALPHA << 24) | (value << 16) | (value << 8) | value;
-        }
-        return Bitmap.createBitmap(pixels, GRAIN_SIZE, GRAIN_SIZE, Bitmap.Config.ARGB_8888);
     }
 
     private static float clamp(float value, float min, float max) {

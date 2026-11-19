@@ -10979,18 +10979,14 @@ public class ProfileActivity extends BaseFragment implements NotificationCenter.
     private final RectF previousAvatarRect = new RectF();
 
     /**
-     * Pakoogram: единый фон экрана профиля на самом нижнем слое {@code fragmentView}.
+     * Pakoogram: чистый фон экрана профиля на самом нижнем слое {@code fragmentView}.
      *
-     * <p>Сначала рисуется плавный вертикальный {@link LinearGradient}: насыщенный
-     * светящийся оттенок текущей палитры сверху плавно уходит в глубокий тёмный низ.
-     * Поверх него — крупный мягкий {@link RadialGradient} с центром ровно по
-     * координатам {@code avatarImage}: ореол двигается вместе с аватаркой при
-     * прокрутке и при её раскрытии, поэтому фон выглядит объёмным.</p>
+     * <p>Используется цвет текущей темы ({@link Theme#key_windowBackgroundGray}),
+     * без оттенка палитры аватарки: облака и 24-секторный ореол рисуются отдельным
+     * слоем {@link #drawPakoogramDreamLayer(Canvas)}.</p>
      */
     private void drawPakoogramScreenBackground(Canvas canvas) {
-        final PakoogramAvatarPalette.PaletteData palette = pakoogramPalette;
-        if (palette == null || fragmentView == null || avatarImage == null
-                || !PakoogramConfig.isAdaptiveChatThemeEnabled()) {
+        if (!PakoogramConfig.isAdaptiveChatThemeEnabled() || fragmentView == null) {
             return;
         }
         final int width = fragmentView.getMeasuredWidth();
@@ -10998,71 +10994,10 @@ public class ProfileActivity extends BaseFragment implements NotificationCenter.
         if (width <= 0 || height <= 0) {
             return;
         }
-        final boolean dark = Theme.isCurrentThemeDark();
-        final int brightness = Math.max(PakoogramConfig.getAvatarGlowBrightness(), 1);
-        final int glow = palette.getGlowColor(brightness);
-        final int glowHalo = palette.getGlowHaloColor(brightness);
-
-        // Верх — глубокий приглушённый оттенок палитры (HSV V <= 0.16), низ — почти чёрный
-        // с тем же подтоном (V <= 0.07): фон не спорит с аватаркой и плавно растворяется
-        // в тёмной области вкладок без резкого стыка.
-        final int accent = palette.getDialogCardAccentColor(dark);
-        final int top = dark
-                ? pakoogramClampBrightness(accent, 0.16f)
-                : ColorUtils.setAlphaComponent(accent, 0xFF);
-        final int bottom = dark
-                ? pakoogramClampBrightness(ColorUtils.blendARGB(accent, Color.BLACK, 0.55f), 0.07f)
-                : ColorUtils.blendARGB(top, Color.BLACK, 0.78f);
-        if (pakoogramScreenGradient == null || pakoogramScreenGradientHeight != height
-                || pakoogramScreenGradientTopColor != top || pakoogramScreenGradientBottomColor != bottom) {
-            pakoogramScreenGradientHeight = height;
-            pakoogramScreenGradientTopColor = top;
-            pakoogramScreenGradientBottomColor = bottom;
-            pakoogramScreenGradient = new LinearGradient(0, 0, 0, height, top, bottom, Shader.TileMode.CLAMP);
-        }
-        pakoogramScreenPaint.setShader(pakoogramScreenGradient);
-        canvas.drawRect(0, 0, width, height, pakoogramScreenPaint);
+        // Pakoogram: фон профиля — чистый цвет текущей темы, без оттенка аватарки.
         pakoogramScreenPaint.setShader(null);
-
-        // Ореол — строго по аватарке: при прокрутке он уезжает вместе с ней.
-        if (!ViewPositionWatcher.computeRectInParent(avatarImage, fragmentView, pakoogramScreenAvatarRect)) {
-            return;
-        }
-        final float avatarWidth = pakoogramScreenAvatarRect.width();
-        final float avatarHeight = pakoogramScreenAvatarRect.height();
-        if (avatarWidth <= 0f || avatarHeight <= 0f) {
-            return;
-        }
-        final float cx = pakoogramScreenAvatarRect.centerX();
-        final float cy = pakoogramScreenAvatarRect.centerY();
-        // В тёмной теме ореол компактный и полупрозрачный (альфа ~0.32): аватарка контрастно
-        // выделяется, а фон не «светится» на всю ширину экрана.
-        final float radius = Math.max(avatarWidth, avatarHeight) * (dark ? 1.55f : 2.8f);
-        if (pakoogramScreenHaloGradient == null || pakoogramScreenHaloColor != glow
-                || pakoogramScreenHaloRadius != radius || pakoogramScreenHaloDark != dark) {
-            pakoogramScreenHaloColor = glow;
-            pakoogramScreenHaloRadius = radius;
-            pakoogramScreenHaloDark = dark;
-            pakoogramScreenHaloGradient = new RadialGradient(0, 0, radius,
-                    new int[]{
-                            ColorUtils.setAlphaComponent(glowHalo, dark ? 0x52 : 0xB4),
-                            ColorUtils.setAlphaComponent(glow, dark ? 0x1F : 0x4C),
-                            ColorUtils.setAlphaComponent(glow, 0)
-                    },
-                    new float[]{0f, 0.45f, 1f}, Shader.TileMode.CLAMP);
-            // Центр пересчитается матрицей ниже.
-            pakoogramScreenHaloCx = Float.NaN;
-        }
-        if (pakoogramScreenHaloCx != cx || pakoogramScreenHaloCy != cy) {
-            pakoogramScreenHaloCx = cx;
-            pakoogramScreenHaloCy = cy;
-            // Центр ореола двигается матрицей: шейдер не пересоздаётся на каждом кадре прокрутки.
-            pakoogramScreenHaloMatrix.setTranslate(cx, cy);
-            pakoogramScreenHaloGradient.setLocalMatrix(pakoogramScreenHaloMatrix);
-        }
-        pakoogramScreenHaloPaint.setShader(pakoogramScreenHaloGradient);
-        canvas.drawCircle(cx, cy, radius, pakoogramScreenHaloPaint);
-        pakoogramScreenHaloPaint.setShader(null);
+        pakoogramScreenPaint.setColor(Theme.getColor(Theme.key_windowBackgroundGray, resourcesProvider));
+        canvas.drawRect(0, 0, width, height, pakoogramScreenPaint);
     }
 
     /**
@@ -11352,24 +11287,24 @@ public class ProfileActivity extends BaseFragment implements NotificationCenter.
             return;
         }
         final boolean dark = Theme.isCurrentThemeDark();
-        final int screen = pakoogramPalette.getProfileBackgroundColor(dark);
-        final int cards = pakoogramPalette.getProfileCardColor(dark);
+        // Pakoogram: чистый фон текущей темы вместо оттенка аватарки.
+        final int screen = Theme.getColor(Theme.key_windowBackgroundGray, resourcesProvider);
 
         if (listView != null) {
-            // Pakoogram: список прозрачный — под ним виден единый градиентный фон
-            // fragmentView, поэтому при потягивании аватарки вниз нет горизонтального среза.
+            // Pakoogram: список прозрачный — под ним виден единый фон fragmentView,
+            // поэтому при потягивании аватарки вниз нет горизонтального среза.
             // Секции не рисуют непрозрачные карточки: их заменяет drawPakoogramInfoGlass.
             listView.disableSections();
             listView.setBackgroundColor(Color.TRANSPARENT);
             listView.invalidateViews();
         }
         if (searchListView != null) {
-            searchListView.setBackgroundColor(cards);
+            searchListView.setBackgroundColor(screen);
         }
         if (topView != null) {
             topView.setPakoogramPalette(pakoogramPalette);
             // Единый фон экрана: topView не рисует ни шапку, ни подложку —
-            // сквозь него виден градиент fragmentView, поэтому нет горизонтального шва.
+            // сквозь него виден фон fragmentView, поэтому нет горизонтального шва.
             topView.setBackgroundColor(Color.TRANSPARENT);
         }
         if (fragmentView != null) {
@@ -11391,20 +11326,17 @@ public class ProfileActivity extends BaseFragment implements NotificationCenter.
     }
 
     /**
-     * Pakoogram: перекрашивает низ профиля в оттенки текущей палитры аватарки.
-     *
-     * <p>Панель вкладок ({@link SharedMediaLayout}) и её активный индикатор берут
-     * цвета из провайдера ресурсов профиля, поэтому достаточно обновить их цвета;
-     * сетка медиа/подарков и плавающая кнопка «Отправить подарок» также получают
-     * оттенок и акцент палитры.</p>
+     * Pakoogram: обновляет панель вкладок и её цвета, не перекрашивая фон
+     * в оттенок аватарки — используется чистый фон текущей темы.
      */
     private void applyPakoogramBottomPalette(boolean dark) {
-        final PakoogramAvatarPalette.PaletteData palette = pakoogramPalette;
-        if (palette == null) {
+        if (pakoogramPalette == null) {
             return;
         }
+        final int themeBackground = Theme.getColor(Theme.key_windowBackgroundGray, resourcesProvider);
         try {
             if (sharedMediaLayout != null) {
+                sharedMediaLayout.setBackgroundColor(themeBackground);
                 sharedMediaLayout.updateColors();
                 if (sharedMediaLayout.scrollSlidingTextTabStrip != null) {
                     sharedMediaLayout.scrollSlidingTextTabStrip.updateColors();
@@ -11416,7 +11348,7 @@ public class ProfileActivity extends BaseFragment implements NotificationCenter.
                 final RecyclerListView mediaList = sharedMediaLayout.getCurrentListView();
                 if (mediaList != null) {
                     if (sharedMediaLayout.getSelectedTab() != SharedMediaLayout.TAB_SAVED_MESSAGES) {
-                        mediaList.setBackgroundColor(palette.getProfileBackgroundColor(dark));
+                        mediaList.setBackgroundColor(themeBackground);
                     }
                     mediaList.invalidateViews();
                     mediaList.invalidate();

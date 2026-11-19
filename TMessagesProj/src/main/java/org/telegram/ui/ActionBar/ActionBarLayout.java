@@ -591,6 +591,8 @@ public class ActionBarLayout extends FrameLayout implements INavigationLayout, F
     private ActionBar currentActionBar;
     private BottomSheetTabs bottomSheetTabs;
     private BottomSheetTabs.ClipTools bottomSheetTabsClip;
+    // Pakoogram: движок морфинга карточки чата в полноэкранный чат и обратно.
+    private DreamTransitionEngine dreamTransitionEngine;
 
     private EmptyBaseFragment sheetFragment;
     public EmptyBaseFragment getSheetFragment() {
@@ -815,6 +817,17 @@ public class ActionBarLayout extends FrameLayout implements INavigationLayout, F
         }
 
         ViewCompat.setOnApplyWindowInsetsListener(this, this::onApplyWindowInsets);
+        dreamTransitionEngine = new DreamTransitionEngine(this);
+    }
+
+    /**
+     * Pakoogram: запоминает экранные координаты плашки диалога перед открытием чата,
+     * чтобы движок переходов мог выполнить Container Transform.
+     */
+    public void captureTransitionSourceView(View cell, long dialogId) {
+        if (dreamTransitionEngine != null) {
+            dreamTransitionEngine.captureSourceView(cell, dialogId);
+        }
     }
 
     public void setIsLayersLayout() {
@@ -1309,7 +1322,15 @@ public class ActionBarLayout extends FrameLayout implements INavigationLayout, F
         if ((inPreviewMode || transitionAnimationPreviewMode) && child == containerView) {
             drawPreviewDrawables(canvas, containerView);
         }
-        final boolean result = super.drawChild(canvas, child, drawingTime);
+        final boolean result;
+        if (dreamTransitionEngine != null && dreamTransitionEngine.isRunning()
+                && isPakoogramTransitionEnabled() && !isSheet
+                && !inPreviewMode && !transitionAnimationPreviewMode) {
+            result = dreamTransitionEngine.drawChildWithMorph(canvas, child, drawingTime,
+                    (c, v, t) -> super.drawChild(c, v, t));
+        } else {
+            result = super.drawChild(canvas, child, drawingTime);
+        }
         canvas.restoreToCount(restoreCount);
 
         if (translationX != 0 || overrideWidthOffset != -1) {
@@ -1546,6 +1567,9 @@ public class ActionBarLayout extends FrameLayout implements INavigationLayout, F
 
     @Override
     public boolean onTouchEvent(MotionEvent ev) {
+        if (dreamTransitionEngine != null && dreamTransitionEngine.isRunning()) {
+            dreamTransitionEngine.cancel();
+        }
         if (!checkTransitionAnimation() && !inActionMode && !animationInProgress && !predictiveBackInProgress) {
             if (fragmentsStack.size() > 1 && allowSwipe()) {
                 if (ev != null && ev.getAction() == MotionEvent.ACTION_DOWN) {
@@ -1660,6 +1684,9 @@ public class ActionBarLayout extends FrameLayout implements INavigationLayout, F
     private float predictiveBackY;
     private boolean predictiveBackLeft;
     public boolean onBackStarted(float touchX, float touchY) {
+        if (dreamTransitionEngine != null && dreamTransitionEngine.isRunning()) {
+            dreamTransitionEngine.cancel();
+        }
         if (animationInProgress) {
             if (backAnimator != null) {
                 backAnimator.end();
@@ -1842,6 +1869,9 @@ public class ActionBarLayout extends FrameLayout implements INavigationLayout, F
     }
 
     private void onAnimationEndCheck(boolean byCheck) {
+        if (dreamTransitionEngine != null) {
+            dreamTransitionEngine.reset();
+        }
         // До запуска end-руннеблов запоминаем, чем был переход: после них это уже не узнать.
         final boolean wasOpening = onOpenAnimationEndRunnable != null;
         final boolean previewTransition = inPreviewMode || transitionAnimationPreviewMode;
@@ -2441,6 +2471,10 @@ public class ActionBarLayout extends FrameLayout implements INavigationLayout, F
                         containerView.setScaleX(startScale);
                         containerView.setScaleY(startScale);
                     }
+                    // Pakoogram: контейнерный морфинг карточки диалога в полноэкранный чат.
+                    if (!preview && isPakoogramTransitionEnabled() && dreamTransitionEngine != null) {
+                        dreamTransitionEngine.animateOpen(fragment, fragment instanceof ChatActivity, () -> onAnimationEndCheck(false));
+                    }
                     if (containerView.isKeyboardVisible || containerViewBack.isKeyboardVisible) {
                         if (currentFragment != null && !preview) {
                             currentFragment.saveKeyboardPositionBeforeTransition();
@@ -2905,6 +2939,10 @@ public class ActionBarLayout extends FrameLayout implements INavigationLayout, F
                     animation = currentFragment.onCustomTransitionAnimation(false, () -> onAnimationEndCheck(false));
                 }
                 if (animation == null) {
+                    // Pakoogram: обратный морфинг полноэкранного чата в плашку диалога.
+                    if (!inPreviewMode && !transitionAnimationPreviewMode && isPakoogramTransitionEnabled() && dreamTransitionEngine != null) {
+                        dreamTransitionEngine.animateClose(currentFragment, currentFragment instanceof ChatActivity ? ((ChatActivity) currentFragment).getDialogId() : 0L, () -> onAnimationEndCheck(false));
+                    }
                     if (!inPreviewMode && (containerView.isKeyboardVisible || containerViewBack.isKeyboardVisible)) {
                         waitingForKeyboardCloseRunnable = new Runnable() {
                             @Override

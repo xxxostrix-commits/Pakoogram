@@ -147,6 +147,7 @@ import org.telegram.tgnet.tl.TL_chatlists;
 import org.telegram.tgnet.tl.TL_stars;
 import org.telegram.tgnet.tl.TL_stories;
 import org.telegram.ui.ActionBar.ActionBar;
+import org.telegram.ui.ActionBar.ActionBarLayout;
 import org.telegram.ui.ActionBar.ActionBarMenu;
 import org.telegram.ui.ActionBar.ActionBarMenuItem;
 import org.telegram.ui.ActionBar.ActionBarMenuSubItem;
@@ -8266,6 +8267,11 @@ public class DialogsActivity extends BaseFragment implements NotificationCenter.
                 }
             }
         } else {
+            // Pakoogram: запоминаем плашку диалога до открытия чата —
+            // движок переходов сожмёт экран обратно в неё при закрытии.
+            if (view instanceof DialogCell && parentLayout instanceof ActionBarLayout) {
+                ((ActionBarLayout) parentLayout).captureTransitionSourceView(view, dialogId);
+            }
             Bundle args = new Bundle();
             if (DialogObject.isEncryptedDialog(dialogId)) {
                 args.putInt("enc_id", DialogObject.getEncryptedChatId(dialogId));
