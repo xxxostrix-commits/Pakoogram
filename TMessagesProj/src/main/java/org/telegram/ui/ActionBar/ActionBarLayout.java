@@ -1445,6 +1445,10 @@ public class ActionBarLayout extends FrameLayout implements INavigationLayout, F
     }
 
     private void onSlideAnimationEnd(final boolean backAnimation) {
+        // Pakoogram: гарантированно снимаем трансформы/блюр и роли слоёв после жеста «Назад».
+        if (dreamTransitionEngine != null) {
+            dreamTransitionEngine.reset();
+        }
         if (!backAnimation) {
             if (fragmentsStack.size() < 2) {
                 checkBlackScreen("onSlideAnimationEnd exit");
@@ -1505,6 +1509,10 @@ public class ActionBarLayout extends FrameLayout implements INavigationLayout, F
         containerViewBack.setVisibility(View.INVISIBLE);
         startedTracking = false;
         animationInProgress = false;
+        // Pakoogram: жест закрытия выставляет transitionAnimationInProgress, снимаем его здесь,
+        // иначе следующие переходы будут заблокированы.
+        transitionAnimationInProgress = false;
+        transitionAnimationStartTime = 0;
         containerView.setTranslationX(0);
         containerViewBack.setTranslationX(0);
         containerView.setLayerType(LAYER_TYPE_NONE, null);
@@ -1647,7 +1655,33 @@ public class ActionBarLayout extends FrameLayout implements INavigationLayout, F
                         float velX = velocityTracker.getXVelocity();
                         float velY = velocityTracker.getYVelocity();
                         final boolean backAnimation = (newBackTransitions() ? x < dp(56) / 2 || velX < -1000 : x < containerView.getMeasuredWidth() / 3.0f) && (velX < 3500 || Math.abs(velX) < Math.abs(velY));
-                        animateBackEndAnimation(backAnimation);
+                        // Pakoogram: подтверждённый свайп-назад завершаем плавным движком
+                        // вместо старого AnimatorSet. Роли контейнеров здесь инвертированы:
+                        // закрываемый экран ещё в containerView, список чатов — в containerViewBack.
+                        if (!backAnimation && isPakoogramTransitionEnabled() && dreamTransitionEngine != null
+                                && !inPreviewMode && !transitionAnimationPreviewMode) {
+                            final float startTx = containerView.getTranslationX();
+                            final float startTy = containerView.getTranslationY();
+                            final float startScale = containerView.getScaleX();
+                            // Сбрасываем внутренний сдвиг, иначе drawChild обрежет задний список чатов.
+                            innerTranslationX = 0f;
+                            final BaseFragment closingFrag = getLastFragment();
+                            final long closingId = closingFrag instanceof ChatActivity ? ((ChatActivity) closingFrag).getDialogId() : 0L;
+                            animationInProgress = true;
+                            transitionAnimationInProgress = true;
+                            transitionAnimationStartTime = System.currentTimeMillis();
+                            // Страховка: если переход будет прерван, onAnimationEndCheck завершит его корректно.
+                            final Runnable closeEndAction = () -> {
+                                onCloseAnimationEndRunnable = null;
+                                onSlideAnimationEnd(false);
+                            };
+                            onCloseAnimationEndRunnable = closeEndAction;
+                            dreamTransitionEngine.animateCloseFromGesture(containerView, containerViewBack,
+                                    closingFrag, closingId, startTx, startTy, startScale,
+                                    closeEndAction);
+                        } else {
+                            animateBackEndAnimation(backAnimation);
+                        }
                     } else {
                         maybeStartTracking = false;
                         startedTracking = false;
@@ -1748,6 +1782,36 @@ public class ActionBarLayout extends FrameLayout implements INavigationLayout, F
     public void onBackInvoked() {
         if (!predictiveInput) {
             onBackPressed();
+            return;
+        }
+        // Pakoogram: системный Predictive Back завершаем плавным движком закрытия.
+        if (predictiveBackInProgress && isPakoogramTransitionEnabled() && dreamTransitionEngine != null
+                && !inPreviewMode && !transitionAnimationPreviewMode) {
+            if (backAnimator != null) {
+                backAnimator.cancel();
+                backAnimator = null;
+            }
+            final float startTx = containerView.getTranslationX();
+            final float startTy = containerView.getTranslationY();
+            final float startScale = containerView.getScaleX();
+            predictiveBackInProgress = false;
+            predictiveInput = false;
+            // Сбрасываем внутренний сдвиг, иначе drawChild обрежет задний список чатов.
+            innerTranslationX = 0f;
+            final BaseFragment closingFrag = getLastFragment();
+            final long closingId = closingFrag instanceof ChatActivity ? ((ChatActivity) closingFrag).getDialogId() : 0L;
+            animationInProgress = true;
+            transitionAnimationInProgress = true;
+            transitionAnimationStartTime = System.currentTimeMillis();
+            // Страховка: если переход будет прерван, onAnimationEndCheck завершит его корректно.
+            final Runnable closeEndAction = () -> {
+                onCloseAnimationEndRunnable = null;
+                onSlideAnimationEnd(false);
+            };
+            onCloseAnimationEndRunnable = closeEndAction;
+            dreamTransitionEngine.animateCloseFromGesture(containerView, containerViewBack,
+                    closingFrag, closingId, startTx, startTy, startScale,
+                    closeEndAction);
             return;
         }
         predictiveInput = false;
@@ -2461,19 +2525,18 @@ public class ActionBarLayout extends FrameLayout implements INavigationLayout, F
                 if (animation == null) {
                     pakoogramTransitionOpening = true;
                     containerView.setAlpha(0.0f);
+                    // Pakoogram: движок сам управляет геометрией/масштабом, поэтому
+                    // предварительное масштабирование контейнера здесь не применяем.
+                    final boolean useDreamTransition = !preview && isPakoogramTransitionEnabled() && dreamTransitionEngine != null;
                     if (preview) {
                         containerView.setTranslationX(0.0f);
                         containerView.setScaleX(0.9f);
                         containerView.setScaleY(0.9f);
-                    } else {
+                    } else if (!useDreamTransition) {
                         containerView.setTranslationX(getPakoogramTransitionOffset());
                         final float startScale = getPakoogramTransitionStartScale();
                         containerView.setScaleX(startScale);
                         containerView.setScaleY(startScale);
-                    }
-                    // Pakoogram: контейнерный морфинг карточки диалога в полноэкранный чат.
-                    if (!preview && isPakoogramTransitionEnabled() && dreamTransitionEngine != null) {
-                        dreamTransitionEngine.animateOpen(fragment, fragment instanceof ChatActivity, () -> onAnimationEndCheck(false));
                     }
                     if (containerView.isKeyboardVisible || containerViewBack.isKeyboardVisible) {
                         if (currentFragment != null && !preview) {
@@ -2491,7 +2554,13 @@ public class ActionBarLayout extends FrameLayout implements INavigationLayout, F
                                         currentFragment.onTransitionAnimationStart(false, false);
                                     }
                                     fragment.onTransitionAnimationStart(true, false);
-                                    startLayoutAnimation(true, true, preview);
+                                    if (useDreamTransition) {
+                                        transitionAnimationInProgress = true;
+                                        transitionAnimationStartTime = System.currentTimeMillis();
+                                        dreamTransitionEngine.animateOpen(fragment, fragment instanceof ChatActivity, () -> onAnimationEndCheck(false));
+                                    } else {
+                                        startLayoutAnimation(true, true, preview);
+                                    }
                                 } else if (delayedOpenAnimationRunnable != null) {
                                     AndroidUtilities.cancelRunOnUIThread(delayedOpenAnimationRunnable);
                                     if (delayedAnimationResumed) {
@@ -2514,7 +2583,13 @@ public class ActionBarLayout extends FrameLayout implements INavigationLayout, F
                                         currentFragment.onTransitionAnimationStart(false, false);
                                     }
                                     fragment.onTransitionAnimationStart(true, false);
-                                    startLayoutAnimation(true, true, preview);
+                                    if (useDreamTransition) {
+                                        transitionAnimationInProgress = true;
+                                        transitionAnimationStartTime = System.currentTimeMillis();
+                                        dreamTransitionEngine.animateOpen(fragment, fragment instanceof ChatActivity, () -> onAnimationEndCheck(false));
+                                    } else {
+                                        startLayoutAnimation(true, true, preview);
+                                    }
                                 }
                             };
                         }
@@ -2528,10 +2603,20 @@ public class ActionBarLayout extends FrameLayout implements INavigationLayout, F
                                 }
                                 delayedOpenAnimationRunnable = null;
                                 fragment.onTransitionAnimationStart(true, false);
-                                startLayoutAnimation(true, true, preview);
+                                if (useDreamTransition) {
+                                    transitionAnimationInProgress = true;
+                                    transitionAnimationStartTime = System.currentTimeMillis();
+                                    dreamTransitionEngine.animateOpen(fragment, fragment instanceof ChatActivity, () -> onAnimationEndCheck(false));
+                                } else {
+                                    startLayoutAnimation(true, true, preview);
+                                }
                             }
                         };
                         AndroidUtilities.runOnUIThread(delayedOpenAnimationRunnable, 200);
+                    } else if (useDreamTransition) {
+                        transitionAnimationInProgress = true;
+                        transitionAnimationStartTime = System.currentTimeMillis();
+                        dreamTransitionEngine.animateOpen(fragment, fragment instanceof ChatActivity, () -> onAnimationEndCheck(false));
                     } else {
                         startLayoutAnimation(true, true, preview);
                     }
@@ -2939,10 +3024,9 @@ public class ActionBarLayout extends FrameLayout implements INavigationLayout, F
                     animation = currentFragment.onCustomTransitionAnimation(false, () -> onAnimationEndCheck(false));
                 }
                 if (animation == null) {
-                    // Pakoogram: обратный морфинг полноэкранного чата в плашку диалога.
-                    if (!inPreviewMode && !transitionAnimationPreviewMode && isPakoogramTransitionEnabled() && dreamTransitionEngine != null) {
-                        dreamTransitionEngine.animateClose(currentFragment, currentFragment instanceof ChatActivity ? ((ChatActivity) currentFragment).getDialogId() : 0L, () -> onAnimationEndCheck(false));
-                    }
+                    // Pakoogram: строгое разделение — либо плавный движок, либо старый layout-переход.
+                    final boolean useDreamTransition = !inPreviewMode && !transitionAnimationPreviewMode
+                            && isPakoogramTransitionEnabled() && dreamTransitionEngine != null;
                     if (!inPreviewMode && (containerView.isKeyboardVisible || containerViewBack.isKeyboardVisible)) {
                         waitingForKeyboardCloseRunnable = new Runnable() {
                             @Override
@@ -2951,10 +3035,20 @@ public class ActionBarLayout extends FrameLayout implements INavigationLayout, F
                                     return;
                                 }
                                 waitingForKeyboardCloseRunnable = null;
-                                startLayoutAnimation(false, true, false);
+                                if (useDreamTransition) {
+                                    transitionAnimationInProgress = true;
+                                    transitionAnimationStartTime = System.currentTimeMillis();
+                                    dreamTransitionEngine.animateClose(currentFragment, currentFragment instanceof ChatActivity ? ((ChatActivity) currentFragment).getDialogId() : 0L, () -> onAnimationEndCheck(false));
+                                } else {
+                                    startLayoutAnimation(false, true, false);
+                                }
                             }
                         };
                         AndroidUtilities.runOnUIThread(waitingForKeyboardCloseRunnable, 200);
+                    } else if (useDreamTransition) {
+                        transitionAnimationInProgress = true;
+                        transitionAnimationStartTime = System.currentTimeMillis();
+                        dreamTransitionEngine.animateClose(currentFragment, currentFragment instanceof ChatActivity ? ((ChatActivity) currentFragment).getDialogId() : 0L, () -> onAnimationEndCheck(false));
                     } else {
                         startLayoutAnimation(false, true, inPreviewMode || transitionAnimationPreviewMode);
                     }

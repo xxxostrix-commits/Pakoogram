@@ -40,21 +40,29 @@ public class DreamTransitionEngine {
     private static final float TARGET_CLOSED = 0f;
 
     /** Параметры затухающей пружины (рад/с и коэффициент демпфирования). */
-    private static final float GEOMETRY_OMEGA = 22.5f;
-    private static final float GEOMETRY_ZETA = 0.86f;
+    private static final float GEOMETRY_OMEGA = 20.0f;
+    private static final float GEOMETRY_ZETA = 1.01f;
 
-    private static final float CONTENT_OMEGA = 26.5f;
-    private static final float CONTENT_ZETA = 0.95f;
+    private static final float CONTENT_OMEGA = 22.0f;
+    private static final float CONTENT_ZETA = 1.00f;
 
     /** Порог остановки пружины по отклонению и скорости. */
     private static final float EPSILON_POS = 0.0008f;
     private static final float EPSILON_VEL = 0.008f;
 
     /** Глубина ухода заднего слоя (списка чатов) при открытии. */
-    private static final float BACK_DEPTH_SCALE = 0.94f;
-    private static final float BACK_PARALLAX_FACTOR = 0.14f;
-    private static final float FALLBACK_START_SCALE = 0.91f;
-    private static final float FALLBACK_CORNER_RADIUS_DP = 32f;
+    private static final float BACK_DEPTH_SCALE = 0.97f;
+    private static final float BACK_PARALLAX_FACTOR = 0.08f;
+    /** Стартовый/финальный масштаб контента в Container Transform. */
+    private static final float CONTENT_START_SCALE = 0.86f;
+    /** Радиус скругления карточки на экране, dp. */
+    private static final float CARD_RADIUS_DP = 30f;
+    /** Максимальная плотность затемнения заднего слоя (0..255). */
+    private static final float SCRIM_MAX_ALPHA = 30f;
+    /** Визуальный эквивалент BLUR_STRENGTH = 20 при 120 Гц без просадок GPU, dp. */
+    private static final float BLUR_STRENGTH_DP = 13f;
+    /** Базовый множитель скорости анимации. */
+    private static final float ANIMATION_SPEED_BASE = 1.00f;
 
     private final ActionBarLayout layout;
 
@@ -78,6 +86,13 @@ public class DreamTransitionEngine {
     private boolean opening = true;
     private boolean running = false;
 
+    // Pakoogram: при закрытии из жеста/предиктивного Back роли контейнеров инвертированы:
+    // закрываемый экран ещё лежит в containerView, а список чатов — в containerViewBack.
+    private ViewGroup explicitMorphedView = null;
+    private ViewGroup explicitDepthView = null;
+    private float gestureStartTx = 0f, gestureStartTy = 0f, gestureStartScale = 1f;
+    private boolean closingFromGesture = false;
+
     /** Текущее и целевое состояние пружин. */
     private float geomPos = 0f;
     private float geomVel = 0f;
@@ -99,6 +114,7 @@ public class DreamTransitionEngine {
 
     private final Paint scrimPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint shadowPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final Paint cardBgPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private boolean lastBackBlurApplied = false;
     private float lastBlurRadius = -1f;
 
@@ -119,6 +135,7 @@ public class DreamTransitionEngine {
         this.layout = layout;
         scrimPaint.setStyle(Paint.Style.FILL);
         shadowPaint.setStyle(Paint.Style.FILL);
+        cardBgPaint.setStyle(Paint.Style.FILL);
     }
 
     /**
@@ -183,6 +200,7 @@ public class DreamTransitionEngine {
 
         this.opening = true;
         this.onCompleteCallback = onComplete;
+        clearGestureRoleOverride();
 
         if (isChat && hasCapturedSource && !capturedSourceRect.isEmpty()) {
             activeSourceRect.set(capturedSourceRect);
@@ -197,7 +215,7 @@ public class DreamTransitionEngine {
             clearCapturedSource();
         } else {
             activeSourceRect.setEmpty();
-            activeCardRadiusPx = dp(FALLBACK_CORNER_RADIUS_DP);
+            activeCardRadiusPx = dp(CARD_RADIUS_DP);
             useContainerMorph = false;
         }
 
@@ -229,6 +247,7 @@ public class DreamTransitionEngine {
 
         this.opening = false;
         this.onCompleteCallback = onComplete;
+        clearGestureRoleOverride();
 
         // capturedSourceRect к этому моменту уже очищен в animateOpen,
         // поэтому обратный морфинг берёт сохранённую плашку lastOpenedSourceRect.
@@ -244,7 +263,7 @@ public class DreamTransitionEngine {
             useContainerMorph = true;
         } else {
             activeSourceRect.setEmpty();
-            activeCardRadiusPx = dp(FALLBACK_CORNER_RADIUS_DP);
+            activeCardRadiusPx = dp(CARD_RADIUS_DP);
             useContainerMorph = false;
         }
 
@@ -264,6 +283,74 @@ public class DreamTransitionEngine {
 
         applyVisualState(geomPos, contentPos);
         startFrameLoop();
+    }
+
+    /**
+     * Pakoogram: плавное закрытие из свайпа-назад / системного Predictive Back.
+     * В этом сценарии роли контейнеров инвертированы относительно {@link #animateClose}:
+     * закрываемый экран ещё находится в {@code containerView}, а список чатов — в {@code containerViewBack}.
+     *
+     * @param closingView      контейнер с закрываемым экраном (containerView)
+     * @param revealedView     контейнер с открываемым списком чатов (containerViewBack)
+     * @param closingFragment  закрываемый фрагмент (для проверки Container Transform)
+     * @param closingDialogId  id диалога закрываемого чата (0, если неизвестен)
+     * @param startTx          текущий сдвиг закрываемого контейнера по X
+     * @param startTy          текущий сдвиг закрываемого контейнера по Y
+     * @param startScale       текущий масштаб закрываемого контейнера
+     * @param onComplete       коллбэк завершения анимации
+     */
+    public void animateCloseFromGesture(@NonNull ViewGroup closingView, @NonNull ViewGroup revealedView,
+                                        @Nullable BaseFragment closingFragment, long closingDialogId,
+                                        float startTx, float startTy, float startScale,
+                                        @Nullable Runnable onComplete) {
+        stopFrameLoop();
+
+        this.opening = false;
+        this.closingFromGesture = true;
+        this.explicitMorphedView = closingView;
+        this.explicitDepthView = revealedView;
+        this.gestureStartTx = startTx;
+        this.gestureStartTy = startTy;
+        this.gestureStartScale = startScale;
+        this.onCompleteCallback = onComplete;
+
+        // Проверка идентична animateClose: обратный морфинг возможен только для чата,
+        // плашка которого была сохранена при открытии.
+        boolean canMorphBack = closingFragment instanceof ChatActivity
+                && hasLastOpenedSource
+                && !lastOpenedSourceRect.isEmpty()
+                && (closingDialogId == 0L || lastOpenedDialogId == 0L || lastOpenedDialogId == closingDialogId);
+
+        if (canMorphBack) {
+            activeSourceRect.set(lastOpenedSourceRect);
+            activeDialogId = lastOpenedDialogId;
+            activeCardRadiusPx = lastOpenedCardRadiusPx;
+            useContainerMorph = true;
+        } else {
+            activeSourceRect.setEmpty();
+            activeCardRadiusPx = dp(CARD_RADIUS_DP);
+            useContainerMorph = false;
+        }
+
+        geomPos = 0f;
+        geomVel = 0f;
+        contentPos = 0f;
+        contentVel = 0f;
+        geomTarget = TARGET_OPEN;
+        contentTarget = TARGET_OPEN;
+
+        applyVisualState(0f, 0f);
+        startFrameLoop();
+    }
+
+    /** Pakoogram: сбрасывает переопределение ролей слоёв, использованное жестом «Назад». */
+    private void clearGestureRoleOverride() {
+        closingFromGesture = false;
+        explicitMorphedView = null;
+        explicitDepthView = null;
+        gestureStartTx = 0f;
+        gestureStartTy = 0f;
+        gestureStartScale = 1f;
     }
 
     /**
@@ -307,7 +394,7 @@ public class DreamTransitionEngine {
             rawDeltaNs = 16_666_666L; // защита от скачков при сворачивании/фоне
         }
 
-        float speed = MathUtils.clamp(PakoogramConfig.getAnimationSpeed(), 0.5f, 1.5f);
+        float speed = ANIMATION_SPEED_BASE * MathUtils.clamp(PakoogramConfig.getAnimationSpeed(), 0.5f, 1.5f);
         float totalDt = (rawDeltaNs / 1_000_000_000f) * speed;
 
         // Интегрируем суб-шагами до 4 мс для точности пружины на 60/120 Гц.
@@ -364,116 +451,90 @@ public class DreamTransitionEngine {
             return;
         }
 
-        float clampedG = MathUtils.clamp(g, 0f, 1.25f);
-        float clampedC = MathUtils.clamp(c, 0f, 1f);
+        final float clampedG = MathUtils.clamp(g, 0f, 1.25f);
+        final float clampedC = MathUtils.clamp(c, 0f, 1f);
+        final float closeC = clampedC;
+        final float closeT = MathUtils.clamp(clampedG, 0f, 1f);
 
-        if (opening) {
-            // Открытие: g идёт 0 -> 1.
-            if (useContainerMorph) {
-                // Aspect-preserving масштаб: содержимое не сплющивается и не растягивается.
-                float startScaleX = Math.max(0.05f, activeSourceRect.width() / w);
-                float startScaleY = Math.max(0.05f, activeSourceRect.height() / h);
-                float startScale = Math.max(startScaleX, startScaleY);
-                float scale = lerp(startScale, 1f, clampedG);
+        // Pakoogram: при обычном закрытии закрываемый экран лежит в bg, а список чатов — в fg.
+        // При закрытии из жеста «Назад» роли контейнеров инвертированы и заданы явно.
+        final ViewGroup morphed = explicitMorphedView != null ? explicitMorphedView : (opening ? fg : bg);
+        final ViewGroup depth = explicitDepthView != null ? explicitDepthView : (opening ? bg : fg);
 
-                float targetCenterX = w * 0.5f;
-                float targetCenterY = h * 0.5f;
-                float startCenterX = activeSourceRect.centerX();
-                float startCenterY = activeSourceRect.centerY();
-
-                float tx = lerp(startCenterX - targetCenterX, 0f, clampedG);
-                float ty = lerp(startCenterY - targetCenterY, 0f, clampedG);
-
-                fg.setPivotX(w * 0.5f);
-                fg.setPivotY(h * 0.5f);
-                fg.setTranslationX(tx);
-                fg.setTranslationY(ty);
-                fg.setScaleX(scale);
-                fg.setScaleY(scale);
-
-                // Плавный кроссфейд содержимого в первые ~35% пути разворота.
-                float contentAlpha = MathUtils.clamp(clampedC / 0.35f, 0.15f, 1f);
-                fg.setAlpha(contentAlpha);
-            } else {
-                float scale = lerp(FALLBACK_START_SCALE, 1f, clampedG);
-                float tx = lerp(w * 0.12f, 0f, clampedG);
-                fg.setPivotX(w * 0.5f);
-                fg.setPivotY(h * 0.5f);
-                fg.setTranslationX(tx);
-                fg.setTranslationY(0f);
-                fg.setScaleX(scale);
-                fg.setScaleY(scale);
-                fg.setAlpha(MathUtils.clamp(clampedC / 0.4f, 0f, 1f));
-            }
-
-            if (bg != null) {
-                bg.setVisibility(View.VISIBLE);
-                bg.setAlpha(1f);
-                bg.setPivotX(w * 0.5f);
-                bg.setPivotY(h * 0.5f);
-                float backScale = lerp(1f, BACK_DEPTH_SCALE, MathUtils.clamp(clampedG, 0f, 1f));
-                bg.setScaleX(backScale);
-                bg.setScaleY(backScale);
-                bg.setTranslationX(-w * BACK_PARALLAX_FACTOR * MathUtils.clamp(clampedG, 0f, 1f));
-                bg.setTranslationY(0f);
-                updateBackBlur(bg, MathUtils.clamp(clampedG, 0f, 1f));
-            }
-        } else {
-            // Закрытие: в ActionBarLayout при closeLastFragment верхний закрываемый экран
-            // перемещён в containerViewBack, а возвращаемый экран (список чатов) — в containerView.
-            float closeT = MathUtils.clamp(clampedG, 0f, 1f);
-            float closeC = MathUtils.clamp(clampedC, 0f, 1f);
-
-            if (bg != null) {
-                bg.setVisibility(View.VISIBLE);
+        if (morphed != null) {
+            morphed.setVisibility(View.VISIBLE);
+            if (opening) {
+                // Container Transform и Fallback при открытии всегда полностью непрозрачны.
+                morphed.setAlpha(1f);
                 if (useContainerMorph) {
-                    float endScaleX = Math.max(0.05f, activeSourceRect.width() / w);
-                    float endScaleY = Math.max(0.05f, activeSourceRect.height() / h);
-                    float endScale = Math.max(endScaleX, endScaleY);
-                    float scale = lerp(1f, endScale, closeT);
-
-                    float startCenterX = w * 0.5f;
-                    float startCenterY = h * 0.5f;
-                    float endCenterX = activeSourceRect.centerX();
-                    float endCenterY = activeSourceRect.centerY();
-
-                    bg.setPivotX(w * 0.5f);
-                    bg.setPivotY(h * 0.5f);
-                    bg.setTranslationX(lerp(0f, endCenterX - startCenterX, closeT));
-                    bg.setTranslationY(lerp(0f, endCenterY - startCenterY, closeT));
-                    bg.setScaleX(scale);
-                    bg.setScaleY(scale);
-                    bg.setAlpha(lerp(1f, 0f, MathUtils.clamp((closeC - 0.55f) / 0.45f, 0f, 1f)));
+                    morphed.setPivotX(w * 0.5f);
+                    morphed.setPivotY(activeSourceRect.centerY());
+                    morphed.setTranslationX(0f);
+                    morphed.setTranslationY(0f);
+                    float s = lerp(CONTENT_START_SCALE, 1f, clampedG);
+                    morphed.setScaleX(s);
+                    morphed.setScaleY(s);
                 } else {
-                    float scale = lerp(1f, FALLBACK_START_SCALE, closeT);
-                    bg.setPivotX(w * 0.5f);
-                    bg.setPivotY(h * 0.5f);
-                    bg.setTranslationX(lerp(0f, w * 0.62f, closeT));
-                    bg.setTranslationY(0f);
-                    bg.setScaleX(scale);
-                    bg.setScaleY(scale);
-                    bg.setAlpha(lerp(1f, 0f, closeC));
+                    morphed.setPivotX(w * 0.5f);
+                    morphed.setPivotY(h * 0.5f);
+                    morphed.setTranslationX(lerp(w * 0.14f, 0f, clampedG));
+                    morphed.setTranslationY(0f);
+                    float s = lerp(CONTENT_START_SCALE, 1f, clampedG);
+                    morphed.setScaleX(s);
+                    morphed.setScaleY(s);
+                }
+            } else {
+                // Погасание только в последние 15% закрытия — без «полупрозрачной каши».
+                morphed.setAlpha(closeC > 0.85f ? lerp(1f, 0f, (closeC - 0.85f) / 0.15f) : 1f);
+                final float startS = closingFromGesture ? gestureStartScale : 1f;
+                final float startX = closingFromGesture ? gestureStartTx : 0f;
+                final float startY = closingFromGesture ? gestureStartTy : 0f;
+                if (useContainerMorph) {
+                    morphed.setPivotX(w * 0.5f);
+                    morphed.setPivotY(activeSourceRect.centerY());
+                    morphed.setTranslationX(lerp(startX, 0f, closeT));
+                    morphed.setTranslationY(lerp(startY, 0f, closeT));
+                    float s = lerp(startS, CONTENT_START_SCALE, closeT);
+                    morphed.setScaleX(s);
+                    morphed.setScaleY(s);
+                } else {
+                    morphed.setPivotX(w * 0.5f);
+                    morphed.setPivotY(h * 0.5f);
+                    morphed.setTranslationX(lerp(startX, w * 0.35f, closeT));
+                    morphed.setTranslationY(lerp(startY, 0f, closeT));
+                    float s = lerp(startS, CONTENT_START_SCALE, closeT);
+                    morphed.setScaleX(s);
+                    morphed.setScaleY(s);
                 }
             }
+        }
 
-            // Список чатов выплывает из глубины обратно в масштаб 1.0 и чёткость.
-            fg.setVisibility(View.VISIBLE);
-            fg.setAlpha(1f);
-            fg.setPivotX(w * 0.5f);
-            fg.setPivotY(h * 0.5f);
-            float backToFrontScale = lerp(BACK_DEPTH_SCALE, 1f, closeT);
-            fg.setScaleX(backToFrontScale);
-            fg.setScaleY(backToFrontScale);
-            fg.setTranslationX(lerp(-w * BACK_PARALLAX_FACTOR, 0f, closeT));
-            fg.setTranslationY(0f);
-            updateBackBlur(fg, 1f - closeT);
+        // Задний слой уходит в глубину: масштаб + лёгкий parallax + blur.
+        if (depth != null) {
+            depth.setVisibility(View.VISIBLE);
+            depth.setAlpha(1f);
+            depth.setPivotX(w * 0.5f);
+            depth.setPivotY(h * 0.5f);
+            float depthT = opening ? MathUtils.clamp(clampedG, 0f, 1f) : (1f - closeT);
+            float backScale = lerp(1f, BACK_DEPTH_SCALE, depthT);
+            depth.setScaleX(backScale);
+            depth.setScaleY(backScale);
+            if (useContainerMorph) {
+                depth.setTranslationX(0f);
+            } else {
+                depth.setTranslationX(-w * BACK_PARALLAX_FACTOR * depthT);
+            }
+            depth.setTranslationY(0f);
+            updateBackBlur(depth, depthT);
         }
 
         layout.invalidate();
         if (bg != null) {
             bg.invalidate();
         }
-        fg.invalidate();
+        if (fg != null) {
+            fg.invalidate();
+        }
     }
 
     /**
@@ -496,26 +557,36 @@ public class DreamTransitionEngine {
         final ViewGroup fg = layout.containerView;
         final ViewGroup bg = layout.containerViewBack;
 
-        // Позиционируемый/морфируемый верхний слой: при открытии это fg, при закрытии — bg.
-        final View morphedView = opening ? fg : bg;
-        final View depthView = opening ? bg : fg;
+        // Pakoogram: при обычном переходе морфируется fg при открытии и bg при закрытии.
+        // При закрытии из жеста «Назад» роли контейнеров заданы явно.
+        final View morphedView = explicitMorphedView != null ? explicitMorphedView : (opening ? fg : bg);
+        final View depthView = explicitDepthView != null ? explicitDepthView : (opening ? bg : fg);
 
         if (child == morphedView) {
             float morphT = opening ? g : (1f - g);
             float radius;
             if (useContainerMorph) {
+                float startL = 0f;
+                float startT = 0f;
+                float startR = w;
+                float startB = h;
+                if (!opening && closingFromGesture) {
+                    // При закрытии из жеста стартовый прямоугольник сдвинут вместе с пальцем.
+                    startL = Math.max(0f, gestureStartTx);
+                    startT = Math.max(0f, gestureStartTy);
+                    startR = w + Math.max(0f, gestureStartTx);
+                    startB = h + Math.max(0f, gestureStartTy);
+                }
                 tmpRect.set(
-                        lerp(activeSourceRect.left, 0f, morphT),
-                        lerp(activeSourceRect.top, 0f, morphT),
-                        lerp(activeSourceRect.right, w, morphT),
-                        lerp(activeSourceRect.bottom, h, morphT)
+                        lerp(activeSourceRect.left, startL, morphT),
+                        lerp(activeSourceRect.top, startT, morphT),
+                        lerp(activeSourceRect.right, startR, morphT),
+                        lerp(activeSourceRect.bottom, startB, morphT)
                 );
-                radius = lerp(activeCardRadiusPx, 0f, morphT);
+                radius = lerp(dp(CARD_RADIUS_DP), 0f, morphT);
             } else {
-                float insetX = lerp(w * 0.04f, 0f, morphT);
-                float insetY = lerp(h * 0.04f, 0f, morphT);
-                tmpRect.set(insetX, insetY, w - insetX, h - insetY);
-                radius = lerp(dp(FALLBACK_CORNER_RADIUS_DP), 0f, morphT);
+                tmpRect.set(0f, 0f, w, h);
+                radius = lerp(dp(CARD_RADIUS_DP), 0f, morphT);
             }
 
             // Мягкая тень/свечение вокруг карточки во время полёта.
@@ -533,6 +604,10 @@ public class DreamTransitionEngine {
             morphClipPath.addRoundRect(tmpRect, radius, radius, Path.Direction.CW);
             canvas.clipPath(morphClipPath);
 
+            // Плотный фон темы внутри карточки — без прозрачных дыр в содержимом.
+            cardBgPaint.setColor(Theme.getColor(Theme.key_windowBackgroundWhite));
+            canvas.drawRect(tmpRect, cardBgPaint);
+
             boolean drawn = invoker.draw(canvas, child, drawingTime);
             canvas.restoreToCount(saveCount);
             return drawn;
@@ -543,13 +618,13 @@ public class DreamTransitionEngine {
             int saveCount = canvas.save();
             backClipPath.rewind();
             tmpRect.set(0f, 0f, w, h);
-            float backRadius = lerp(0f, dp(18f), depthT);
+            float backRadius = lerp(0f, dp(24f), depthT);
             backClipPath.addRoundRect(tmpRect, backRadius, backRadius, Path.Direction.CW);
             canvas.clipPath(backClipPath);
 
             boolean drawn = invoker.draw(canvas, child, drawingTime);
 
-            int scrimAlpha = (int) (72f * depthT);
+            int scrimAlpha = (int) (SCRIM_MAX_ALPHA * depthT);
             if (scrimAlpha > 0) {
                 scrimPaint.setColor(Color.argb(scrimAlpha, 0, 0, 0));
                 canvas.drawRect(0f, 0f, w, h, scrimPaint);
@@ -566,8 +641,7 @@ public class DreamTransitionEngine {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
             return;
         }
-        int blurStrength = PakoogramConfig.getTransitionBlurStrength();
-        float radius = blurStrength <= 0 ? 0f : dp(blurStrength * 0.35f) * MathUtils.clamp(intensity, 0f, 1f);
+        float radius = dp(BLUR_STRENGTH_DP) * MathUtils.clamp(intensity, 0f, 1f);
         if (radius > 0.4f) {
             if (Math.abs(radius - lastBlurRadius) > 0.35f || !lastBackBlurApplied) {
                 targetView.setRenderEffect(RenderEffect.createBlurEffect(radius, radius, Shader.TileMode.CLAMP));
@@ -591,10 +665,22 @@ public class DreamTransitionEngine {
         activeDialogId = 0L;
         activeCardRadiusPx = 0f;
 
+        // Pakoogram: снимаем переопределение ролей слоёв после жеста и обнуляем
+        // трансформы, которые могли быть применены к «перевёрнутым» контейнерам.
+        closingFromGesture = false;
+        resetSingleView(explicitMorphedView);
+        resetSingleView(explicitDepthView);
+        explicitMorphedView = null;
+        explicitDepthView = null;
+        gestureStartTx = 0f;
+        gestureStartTy = 0f;
+        gestureStartScale = 1f;
+
         resetSingleView(layout.containerView);
         resetSingleView(layout.containerViewBack);
         lastBackBlurApplied = false;
         lastBlurRadius = -1f;
+        // lastOpenedSourceRect намеренно не очищаем — он нужен для следующих закрытий.
     }
 
     private void resetSingleView(@Nullable View v) {
