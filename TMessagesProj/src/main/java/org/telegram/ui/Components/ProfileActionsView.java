@@ -45,6 +45,7 @@ import org.telegram.messenger.Utilities;
 import org.telegram.ui.ActionBar.Theme;
 import org.telegram.ui.Cells.ChatMessageCell;
 import org.telegram.ui.Components.blur3.BlurredBackgroundDrawableViewFactory;
+import org.telegram.ui.DreamGlassEngine;
 import org.telegram.ui.DreamGlassSurface;
 import org.telegram.ui.PakoogramConfig;
 import org.telegram.ui.Components.blur3.drawable.BlurredBackgroundDrawable;
@@ -80,6 +81,13 @@ public class ProfileActionsView extends View {
     private int pakoogramBlurHeight;
     private final RectF pakoogramBlurRect = new RectF();
     private final int[] pakoogramBlurLocation = new int[2];
+    /** Pakoogram: общий движок стекла профиля и система координат его вьюпорта. */
+    @Nullable
+    private DreamGlassEngine pakoogramGlassEngine;
+    @Nullable
+    private View pakoogramGlassViewport;
+    private final RectF pakoogramEngineRect = new RectF();
+    private final int[] pakoogramViewportLocation = new int[2];
 
     private int activeCount = 0;
     private final int targetHeight;
@@ -171,6 +179,18 @@ public class ProfileActionsView extends View {
         }
     }
 
+    /** Pakoogram: кнопки рисуются тем же движком стекла, что и карточки профиля. */
+    public void setPakoogramGlassEngine(@Nullable DreamGlassEngine engine) {
+        pakoogramGlassEngine = engine;
+        invalidate();
+    }
+
+    /** Pakoogram: вьюпорт, в координатах которого движок размывает фон профиля. */
+    public void setPakoogramGlassViewport(@Nullable View viewport) {
+        pakoogramGlassViewport = viewport;
+        invalidate();
+    }
+
     /**
      * Pakoogram: передаёт уменьшенный размытый кадр экрана профиля. Кнопки
      * обрезают его своими скруглёнными прямоугольниками, поэтому под ними
@@ -197,6 +217,25 @@ public class ProfileActionsView extends View {
     private void drawGlass(Canvas canvas, RectF rect, float radius, float alpha, boolean dreamGlass) {
         if (dreamGlass) {
             if (alpha <= 0.01f) {
+                return;
+            }
+            // Pakoogram: кнопки используют общий движок стекла профиля — та же
+            // подложка, кромка и пружина нажатия, что у информационных карточек.
+            if (pakoogramGlassEngine != null && pakoogramGlassViewport != null
+                    && pakoogramGlassViewport.isAttachedToWindow()) {
+                pakoogramGlassViewport.getLocationInWindow(pakoogramViewportLocation);
+                getLocationInWindow(pakoogramBlurLocation);
+                final float dx = pakoogramBlurLocation[0] - pakoogramViewportLocation[0];
+                final float dy = pakoogramBlurLocation[1] - pakoogramViewportLocation[1];
+                pakoogramEngineRect.set(rect);
+                pakoogramEngineRect.offset(dx, dy);
+                final int engineSave = canvas.save();
+                canvas.translate(dx, dy);
+                pakoogramGlassEngine.drawGlass(canvas, pakoogramEngineRect,
+                        radius / AndroidUtilities.density,
+                        pakoogramGlassViewport.getWidth(),
+                        pakoogramGlassViewport.getHeight(), alpha);
+                canvas.restoreToCount(engineSave);
                 return;
             }
             // Свечение и облака мягко просвечивают сквозь матовую подложку,
@@ -452,7 +491,10 @@ public class ProfileActionsView extends View {
         // over the photo the buttons are the dimmed photo on every Android (see ProfileButtonsGlass): white icons there
         final float useFilledWhiteIcon = !isButtonColorLight ? 1 : MathUtils.clamp((parentExpanded - 0.75f) / 0.25f, 0, 1);
 
-        final int textColor = ColorUtils.blendARGB(Color.BLACK, Color.WHITE, useFilledWhiteIcon);
+        // Pakoogram: на светлом стекле подписи и иконки — тёмно-синие константы движка.
+        final int textColor = pakoogramDreamGlass
+                ? ColorUtils.blendARGB(DreamGlassEngine.ICON_PRIMARY, Color.WHITE, useFilledWhiteIcon)
+                : ColorUtils.blendARGB(Color.BLACK, Color.WHITE, useFilledWhiteIcon);
         if (lastColorFilter == null || lastColorFilterColor != textColor) {
             lastColorFilterColor = textColor;
             lastColorFilter = new PorterDuffColorFilter(textColor, PorterDuff.Mode.SRC_IN);

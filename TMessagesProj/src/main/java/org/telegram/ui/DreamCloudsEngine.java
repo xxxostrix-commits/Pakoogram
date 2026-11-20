@@ -2,468 +2,366 @@ package org.telegram.ui;
 
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
+import android.graphics.Color;
+import android.graphics.LinearGradient;
 import android.graphics.Paint;
+import android.graphics.Rect;
 import android.graphics.RectF;
+import android.graphics.Shader;
 
 import org.telegram.messenger.AndroidUtilities;
+import org.telegram.messenger.Utilities;
 
 import java.util.Random;
 
-/**
- * Pakoogram: детальный пиксель-арт кучевых облаков на фоне профиля.
- *
- * <p>Каждое облако собирается из 5–7 перекрывающихся круглых клубов: центральные
- * выше, боковые ниже. Внутри силуэта рисуются округлые завитки-контуры, снизу —
- * глубокая тень, а по бокам и у основания тянутся заострённые пиксельные хвостики
- * с отдельными «отстоящими» пикселями на концах. Переходы между цветовыми зонами
- * разбиваются классическим шахматным дизерингом {@code ((x + y) & 1) == 0}.</p>
- *
- * <p>Битмапы рисуются с {@code setFilterBitmap(false)} и {@code setAntiAlias(false)},
- * поэтому пиксели остаются чёткими квадратами. Облака почти статичны: они лишь
- * слегка колышутся вокруг фиксированных якорей по бесшовной синусоиде.</p>
- */
 public final class DreamCloudsEngine {
 
-    /** Количество облаков на экране профиля. */
-    public static final int CLOUD_COUNT = 8;
+    public static final int SKY_TOP_COLOR = 0xFFD9EEFF;
+    public static final int SKY_CENTER_COLOR = 0xFFFBF9FC;
+    public static final int SKY_HORIZON_COLOR = 0xFFFCE2EC;
 
-    private static final int MIN_WIDTH = 68;
-    private static final int MAX_WIDTH = 88;
-    private static final int MIN_HEIGHT = 36;
-    private static final int MAX_HEIGHT = 46;
-    /** Размер одного пикселя облака в dp. */
-    private static final float PIXEL_SIZE_DP = 2.4f;
+    private static final int FAR_CLOUD_COUNT = 4;
+    private static final int MID_CLOUD_COUNT = 5;
+    private static final int NEAR_CLOUD_COUNT = 4;
 
-    /** Фиксированные якоря облаков в долях ширины и высоты экрана. */
-    private static final float[] ANCHOR_X = {
-            0.16f, 0.84f, 0.20f, 0.82f, 0.18f, 0.80f, 0.24f, 0.78f
-    };
-    private static final float[] ANCHOR_Y = {
-            0.12f, 0.15f, 0.28f, 0.33f, 0.50f, 0.56f, 0.72f, 0.78f
-    };
+    private static final int BLUR_SCALE = 8;
+    private static final int STACK_BLUR_RADIUS = 10;
 
-    private static Bitmap[] cloudsLight;
-    private static Bitmap[] cloudsDark;
+    private static final Paint skyPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private static final Paint puffPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private static final Paint mistPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private static final Paint blurDrawPaint = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG);
 
-    private static final Paint cloudPaint = new Paint();
-    private static final RectF rectTmp = new RectF();
+    private static final RectF skyRect = new RectF();
+    private static final RectF puffRect = new RectF();
+    private static final Rect blurSrcRect = new Rect();
+    private static final RectF blurDstRect = new RectF();
 
-    static {
-        // Пиксель-арт: никакого сглаживания и билинейной фильтрации.
-        cloudPaint.setAntiAlias(false);
-        cloudPaint.setFilterBitmap(false);
-        cloudPaint.setDither(false);
-    }
+    private static LinearGradient skyGradient;
+    private static float cachedSkyWidth = -1f;
+    private static float cachedSkyHeight = -1f;
+
+    private static float scrollOffsetPx = 0f;
+    private static float lastBlurPhase = -1f;
+
+    private static final CloudNode[] FAR_CLOUDS = createLayer(FAR_CLOUD_COUNT, 0x11A8C7E8L, 0.32f, 0.52f, 0.14f, 0.24f);
+    private static final CloudNode[] MID_CLOUDS = createLayer(MID_CLOUD_COUNT, 0x22E5B8CEL, 0.24f, 0.44f, 0.10f, 0.18f);
+    private static final CloudNode[] NEAR_CLOUDS = createLayer(NEAR_CLOUD_COUNT, 0x33B8D8F8L, 0.20f, 0.38f, 0.08f, 0.15f);
+
+    private static Bitmap blurBitmap;
+    private static Canvas blurCanvas;
+    private static int blurViewportWidth;
+    private static int blurViewportHeight;
+    private static boolean blurDirty = true;
 
     private DreamCloudsEngine() {
-        // утилитарный класс
     }
 
-    /**
-     * Рисует облака поверх фона профиля.
-     *
-     * <p>Положение каждого облака задаётся фиксированным якорем в долях экрана,
-     * а анимация лишь слегка колышет его по бесшовной синусоиде. Итоговый
-     * прямоугольник округляется до целых пикселей, чтобы пиксельная сетка не
-     * дрожала. Параметры аватарки сохранены для совместимости с вызывающим
-     * кодом и больше не влияют на позиционирование.</p>
-     *
-     * @param width        ширина экрана
-     * @param height       высота экрана
-     * @param avatarCx     центр аватарки по X (не используется)
-     * @param avatarCy     центр аватарки по Y (не используется)
-     * @param avatarRadius радиус аватарки (не используется)
-     * @param phase        фаза анимации {@code 0..1} (полный цикл — 14 секунд)
-     * @param isDark       тёмная ли тема
-     */
-    public static void draw(Canvas canvas, float width, float height,
-                            float avatarCx, float avatarCy, float avatarRadius,
-                            float phase, boolean isDark) {
+    public static void setScrollOffset(float offsetPx) {
+        if (Float.isNaN(offsetPx) || Float.isInfinite(offsetPx)) {
+            return;
+        }
+        if (Math.abs(scrollOffsetPx - offsetPx) > 0.05f) {
+            scrollOffsetPx = offsetPx;
+            blurDirty = true;
+        }
+    }
+
+    public static void onScrollDelta(float deltaY) {
+        if (Float.isNaN(deltaY) || Float.isInfinite(deltaY) || deltaY == 0f) {
+            return;
+        }
+        scrollOffsetPx += deltaY;
+        blurDirty = true;
+    }
+
+    public static void invalidateBlurBuffer() {
+        blurDirty = true;
+    }
+
+    public static void draw(Canvas canvas, float width, float height, float phase, int unusedTint) {
+        draw(canvas, width, height, phase);
+    }
+
+    public static void draw(Canvas canvas, float width, float height, float phase) {
         if (canvas == null || width <= 0f || height <= 0f) {
             return;
         }
-        ensureBitmaps(isDark);
-        final Bitmap[] clouds = isDark ? cloudsDark : cloudsLight;
-        if (clouds == null) {
+        drawSkyAndClouds(canvas, width, height, phase, scrollOffsetPx);
+
+        final int w = Math.round(width);
+        final int h = Math.round(height);
+        boolean phaseChanged = lastBlurPhase < 0f || Math.abs(phase - lastBlurPhase) > 0.002f;
+        if (blurDirty || phaseChanged || blurBitmap == null || blurViewportWidth != w || blurViewportHeight != h) {
+            updateBlurBuffer(width, height, phase, scrollOffsetPx, w, h);
+            lastBlurPhase = phase;
+            blurDirty = false;
+        }
+    }
+
+    public static Bitmap getBlurredBackground() {
+        return blurBitmap;
+    }
+
+    public static int getBlurViewportWidth() {
+        return blurViewportWidth;
+    }
+
+    public static int getBlurViewportHeight() {
+        return blurViewportHeight;
+    }
+
+    public static void drawBlurredSlice(Canvas canvas, RectF targetRect, float viewportW, float viewportH) {
+        if (canvas == null || targetRect == null || blurBitmap == null || blurBitmap.isRecycled()) {
+            return;
+        }
+        if (viewportW <= 0f || viewportH <= 0f || targetRect.width() <= 0f || targetRect.height() <= 0f) {
             return;
         }
 
-        // Пиксель-арт масштабируется целыми пикселями экрана и только
-        // nearest-neighbour: облака остаются острыми квадратиками.
-        final float basePixel = AndroidUtilities.dpf2(PIXEL_SIZE_DP);
-        for (int i = 0; i < CLOUD_COUNT; i++) {
-            final Bitmap bitmap = clouds[i];
-            if (bitmap == null) {
-                continue;
-            }
-            final float cloudWidth = bitmap.getWidth() * basePixel;
-            final float cloudHeight = bitmap.getHeight() * basePixel;
-            final float anchorX = ANCHOR_X[i] * width;
-            final float anchorY = ANCHOR_Y[i] * height;
+        final int bw = blurBitmap.getWidth();
+        final int bh = blurBitmap.getHeight();
+        final float normLeft = clamp01(targetRect.left / viewportW);
+        final float normTop = clamp01(targetRect.top / viewportH);
+        final float normRight = clamp01(targetRect.right / viewportW);
+        final float normBottom = clamp01(targetRect.bottom / viewportH);
 
-            // Бесшовное колыхание на месте: только целые множители phase,
-            // поэтому на стыке цикла нет рывка.
-            final float dx = (float) Math.sin((phase + i * 0.17f) * Math.PI * 2.0) * AndroidUtilities.dpf2(3.5f);
-            final float dy = (float) Math.cos((phase + i * 0.23f) * Math.PI * 2.0) * AndroidUtilities.dpf2(2.2f);
+        int srcLeft = Math.round(normLeft * bw);
+        int srcTop = Math.round(normTop * bh);
+        int srcRight = Math.round(normRight * bw);
+        int srcBottom = Math.round(normBottom * bh);
 
-            final float left = Math.round(anchorX - cloudWidth * 0.5f + dx);
-            final float top = Math.round(anchorY - cloudHeight * 0.5f + dy);
-            rectTmp.set(left, top,
-                    left + Math.round(cloudWidth),
-                    top + Math.round(cloudHeight));
-            canvas.drawBitmap(bitmap, null, rectTmp, cloudPaint);
+        if (srcRight <= srcLeft) {
+            srcRight = Math.min(bw, srcLeft + 1);
         }
+        if (srcBottom <= srcTop) {
+            srcBottom = Math.min(bh, srcTop + 1);
+        }
+
+        blurSrcRect.set(srcLeft, srcTop, srcRight, srcBottom);
+        blurDstRect.set(targetRect);
+        canvas.drawBitmap(blurBitmap, blurSrcRect, blurDstRect, blurDrawPaint);
     }
 
-    /* ------------------------------------------------------------- генерация */
+    private static void drawSkyAndClouds(Canvas canvas, float width, float height, float phase, float scrollPx) {
+        ensureSkyGradient(width, height);
+        skyRect.set(0f, 0f, width, height);
+        skyPaint.setShader(skyGradient);
+        canvas.drawRect(skyRect, skyPaint);
+        skyPaint.setShader(null);
 
-    private static void ensureBitmaps(boolean isDark) {
-        if (isDark) {
-            if (cloudsDark == null) {
-                cloudsDark = buildClouds(true);
-            }
-        } else if (cloudsLight == null) {
-            cloudsLight = buildClouds(false);
-        }
+        drawMistLayer(canvas, FAR_CLOUDS, width, height, phase, scrollPx, 0.14f, 0.25f);
+        drawVolumetricLayer(canvas, MID_CLOUDS, width, height, phase, scrollPx, 0.35f, 0.55f);
+        drawNearLayer(canvas, NEAR_CLOUDS, width, height, phase, scrollPx, 0.65f, 0.85f);
     }
 
-    private static Bitmap[] buildClouds(boolean isDark) {
-        final Bitmap[] result = new Bitmap[CLOUD_COUNT];
-        for (int i = 0; i < CLOUD_COUNT; i++) {
-            result[i] = createCloudBitmap(i, isDark);
-        }
-        return result;
-    }
-
-    /**
-     * Собирает одно облако: 5–7 круглых клубов, пиксельные хвостики по бокам и
-     * снизу, внутренние завитки и ручная раскраска в четыре оттенка с дизерингом.
-     */
-    private static Bitmap createCloudBitmap(int index, boolean isDark) {
-        final Random random = new Random(0x9E3779B97F4A7C15L * (index + 1) ^ 0xC0FFEE11L);
-        final int width = MIN_WIDTH + random.nextInt(MAX_WIDTH - MIN_WIDTH + 1);
-        final int height = MIN_HEIGHT + random.nextInt(MAX_HEIGHT - MIN_HEIGHT + 1);
-        final boolean[] solid = new boolean[width * height];
-        final boolean[] tail = new boolean[width * height];
-        final boolean[] detached = new boolean[width * height];
-        final byte[] owner = new byte[width * height];
-
-        // 5–7 перекрывающихся круглых клубов: центральные выше, боковые ниже.
-        final int puffs = 5 + random.nextInt(3);
-        final float[] puffCx = new float[puffs];
-        final float[] puffCy = new float[puffs];
-        final float[] puffR = new float[puffs];
-        for (int p = 0; p < puffs; p++) {
-            final float t = puffs > 1 ? p / (float) (puffs - 1) : 0.5f;
-            final float dome = (float) Math.sin(t * Math.PI);
-            final float cx = width * (0.30f + 0.40f * t)
-                    + (random.nextFloat() - 0.5f) * width * 0.04f;
-            final float cy = height * (0.56f - 0.17f * dome)
-                    + (random.nextFloat() - 0.5f) * height * 0.06f;
-            final float radius = Math.min(height * 0.26f, width * 0.12f)
-                    * (0.85f + 0.20f * random.nextFloat());
-            puffCx[p] = cx;
-            puffCy[p] = cy;
-            puffR[p] = radius;
-            final int minX = Math.max(0, (int) Math.floor(cx - radius));
-            final int maxX = Math.min(width - 1, (int) Math.ceil(cx + radius));
-            final int minY = Math.max(0, (int) Math.floor(cy - radius));
-            final int maxY = Math.min(height - 1, (int) Math.ceil(cy + radius));
-            for (int y = minY; y <= maxY; y++) {
-                final float ny = y + 0.5f - cy;
-                for (int x = minX; x <= maxX; x++) {
-                    final float nx = x + 0.5f - cx;
-                    if (nx * nx + ny * ny <= radius * radius) {
-                        solid[y * width + x] = true;
-                        owner[y * width + x] = (byte) (p + 1);
-                    }
-                }
-            }
-        }
-
-        // Заострённые пиксельные хвостики по бокам и у основания.
-        addPixelTails(solid, tail, detached, width, height, random);
-
-        // Палитра: облака светлые бело-голубые в обеих темах.
-        final int highlightColor = isDark ? 0xFFF0F6FF : 0xFFFFFFFF;
-        final int bodyColor = isDark ? 0xFFD4E9FC : 0xFFE6F4FF;
-        final int midShadowColor = isDark ? 0xFFA2C9F0 : 0xFFB8E0FC;
-        final int deepShadowColor = isDark ? 0xFF78A5D8 : 0xFF8CC2F0;
-
-        // Округлые дуги-завитки внутри тела и на стыках клубов.
-        final boolean[] swirlCore = new boolean[width * height];
-        final boolean[] swirlEdge = new boolean[width * height];
-        buildSwirlMasks(solid, puffCx, puffCy, puffR, puffs, width, height, swirlCore, swirlEdge);
-
-        final int[] pixels = new int[width * height];
-        paintCloudPixels(pixels, solid, tail, detached, owner, puffCx, puffCy, puffR,
-                swirlCore, swirlEdge, width, height, index,
-                highlightColor, bodyColor, midShadowColor, deepShadowColor);
-        return Bitmap.createBitmap(pixels, width, height, Bitmap.Config.ARGB_8888);
-    }
-
-    /**
-     * Раскрашивает пиксели силуэта: блик на верхушках клубов, светлое тело,
-     * средняя тень в завитках и на нижней части, глубокая тень в основании.
-     */
-    private static void paintCloudPixels(int[] pixels, boolean[] solid, boolean[] tail,
-                                         boolean[] detached, byte[] owner,
-                                         float[] puffCx, float[] puffCy, float[] puffR,
-                                         boolean[] swirlCore, boolean[] swirlEdge,
-                                         int width, int height, int index,
-                                         int highlightColor, int bodyColor,
-                                         int midShadowColor, int deepShadowColor) {
-        for (int x = 0; x < width; x++) {
-            int top = -1;
-            int bottom = -1;
-            for (int y = 0; y < height; y++) {
-                if (solid[y * width + x]) {
-                    if (top < 0) {
-                        top = y;
-                    }
-                    bottom = y;
-                }
-            }
-            if (top < 0) {
-                continue;
-            }
-            final int columnHeight = bottom - top + 1;
-            final int deepRows = 2 + ((x + index) & 1);
-            final int deepStart = bottom - deepRows + 1;
-            final int midStart = bottom - Math.max(3, Math.round(columnHeight * 0.34f)) + 1;
-            for (int y = top; y <= bottom; y++) {
-                final int idx = y * width + x;
-                if (!solid[idx]) {
-                    continue;
-                }
-                if (detached[idx]) {
-                    pixels[idx] = ((x + y) & 1) == 0 ? midShadowColor : bodyColor;
-                    continue;
-                }
-                if (tail[idx]) {
-                    pixels[idx] = y <= top + 1 || y < bottom
-                            ? bodyColor : midShadowColor;
-                    continue;
-                }
-                int capBottomRow = -1;
-                boolean highlight = false;
-                if (owner[idx] > 0) {
-                    final int p = owner[idx] - 1;
-                    final int depth = 2 + ((index + p) % 3);
-                    final float capTop = puffCy[p] - puffR[p];
-                    capBottomRow = (int) Math.floor(capTop + depth);
-                    final float dx = x + 0.5f - puffCx[p];
-                    // Верхние 2–4 пикселя клуба, особенно сверху-слева, — блик.
-                    highlight = (y <= capBottomRow && dx <= puffR[p] * 0.55f)
-                            || (y <= capBottomRow && dx <= puffR[p] * 0.85f
-                            && ((x + y) & 1) == 0);
-                }
-                int color;
-                if (y >= deepStart) {
-                    color = y == deepStart
-                            ? (((x + y) & 1) == 0 ? deepShadowColor : midShadowColor)
-                            : deepShadowColor;
-                } else if (y >= midStart) {
-                    color = y == midStart
-                            ? (((x + y) & 1) == 0 ? midShadowColor : bodyColor)
-                            : midShadowColor;
-                } else if (highlight) {
-                    color = y == capBottomRow
-                            ? (((x + y) & 1) == 0 ? highlightColor : bodyColor)
-                            : highlightColor;
-                } else {
-                    color = bodyColor;
-                }
-                if (y < deepStart) {
-                    if (swirlCore[idx]) {
-                        color = midShadowColor;
-                    } else if (swirlEdge[idx]) {
-                        color = ((x + y) & 1) == 0 ? midShadowColor : bodyColor;
-                    }
-                }
-                pixels[idx] = color;
-            }
-        }
-    }
-
-    /** Строит маски округлых завитков: дуги клубов и стыки-швы между ними. */
-    private static void buildSwirlMasks(boolean[] solid, float[] puffCx, float[] puffCy,
-                                        float[] puffR, int puffs, int width, int height,
-                                        boolean[] swirlCore, boolean[] swirlEdge) {
-        for (int p = 0; p < puffs; p++) {
-            final float inner = puffR[p] * 0.58f;
-            final int minX = Math.max(0, (int) Math.floor(puffCx[p] - inner - 2f));
-            final int maxX = Math.min(width - 1, (int) Math.ceil(puffCx[p] + inner + 2f));
-            final int minY = Math.max(0, (int) Math.floor(puffCy[p] - 1f));
-            final int maxY = Math.min(height - 1, (int) Math.ceil(puffCy[p] + inner + 2f));
-            for (int y = minY; y <= maxY; y++) {
-                final float dy = y + 0.5f - puffCy[p];
-                if (dy <= 0f) {
-                    continue;
-                }
-                for (int x = minX; x <= maxX; x++) {
-                    final int idx = y * width + x;
-                    if (!solid[idx]) {
-                        continue;
-                    }
-                    final float dx = x + 0.5f - puffCx[p];
-                    final float distance = (float) Math.sqrt(dx * dx + dy * dy);
-                    final float band = Math.abs(distance - inner);
-                    if (band <= 0.8f) {
-                        swirlCore[idx] = true;
-                    } else if (band <= 1.8f) {
-                        swirlEdge[idx] = true;
-                    }
-                }
-            }
-        }
-        // Стыки клубов: короткие вертикальные дуги-швы между соседними центрами.
-        for (int p = 0; p + 1 < puffs; p++) {
-            final float seamX = (puffCx[p] + puffCx[p + 1]) * 0.5f;
-            final float seamTop = Math.min(puffCy[p], puffCy[p + 1]);
-            final float seamBottom = Math.max(puffCy[p], puffCy[p + 1])
-                    + Math.min(puffR[p], puffR[p + 1]) * 0.55f;
-            final int minX = Math.max(0, (int) Math.floor(seamX - 1.5f));
-            final int maxX = Math.min(width - 1, (int) Math.ceil(seamX + 1.5f));
-            final int minY = Math.max(0, (int) Math.floor(seamTop));
-            final int maxY = Math.min(height - 1, (int) Math.ceil(seamBottom));
-            for (int y = minY; y <= maxY; y++) {
-                for (int x = minX; x <= maxX; x++) {
-                    final int idx = y * width + x;
-                    if (!solid[idx] || Math.abs(x + 0.5f - seamX) > 1.1f) {
-                        continue;
-                    }
-                    if (((x + y) & 1) == 0) {
-                        swirlCore[idx] = true;
-                    } else {
-                        swirlEdge[idx] = true;
-                    }
-                }
-            }
-        }
-    }
-
-    /**
-     * Добавляет заострённые пиксельные хвостики: сужающиеся горизонтальные
-     * полоски по бокам и у основания плюс отдельные отстоящие пиксели на концах.
-     */
-    private static void addPixelTails(boolean[] solid, boolean[] tail, boolean[] detached,
-                                      int width, int height, Random random) {
-        int minX = width;
-        int maxX = -1;
-        int minY = height;
-        int maxY = -1;
-        for (int y = 0; y < height; y++) {
-            for (int x = 0; x < width; x++) {
-                if (solid[y * width + x]) {
-                    if (x < minX) {
-                        minX = x;
-                    }
-                    if (x > maxX) {
-                        maxX = x;
-                    }
-                    if (y < minY) {
-                        minY = y;
-                    }
-                    if (y > maxY) {
-                        maxY = y;
-                    }
-                }
-            }
-        }
-        if (maxX < 0) {
+    private static void ensureSkyGradient(float width, float height) {
+        if (skyGradient != null && cachedSkyWidth == width && cachedSkyHeight == height) {
             return;
         }
-        final int centerY = (minY + maxY) / 2;
+        cachedSkyWidth = width;
+        cachedSkyHeight = height;
+        skyGradient = new LinearGradient(
+                0f, 0f, 0f, height,
+                new int[]{SKY_TOP_COLOR, SKY_CENTER_COLOR, SKY_HORIZON_COLOR},
+                new float[]{0f, 0.54f, 1f},
+                Shader.TileMode.CLAMP
+        );
+    }
 
-        // Два уровня боковых хвостиков: середина силуэта и нижняя треть.
-        addHorizontalTail(solid, tail, detached, width, height, -1, centerY - 1, random);
-        addHorizontalTail(solid, tail, detached, width, height, 1, centerY + 1, random);
-        addHorizontalTail(solid, tail, detached, width, height, -1,
-                Math.max(minY + 4, maxY - 4), random);
-        addHorizontalTail(solid, tail, detached, width, height, 1,
-                Math.max(minY + 5, maxY - 3), random);
+    private static void drawMistLayer(Canvas canvas, CloudNode[] layer, float width, float height,
+                                      float phase, float scrollPx, float speedMult, float parallaxFactor) {
+        final float parallaxY = -scrollPx * parallaxFactor;
+        for (int i = 0; i < layer.length; i++) {
+            final CloudNode c = layer[i];
+            final float driftX = wrapDrift(phase * c.driftSpeed * speedMult + c.phaseOffset,
+                    width + c.baseWidth * 1.6f) - c.baseWidth * 0.8f;
+            final float swayY = (float) Math.sin((phase * 2f + c.phaseOffset) * Math.PI * 2.0)
+                    * AndroidUtilities.dpf2(2.5f);
+            final float baseY = c.anchorY * height + swayY + parallaxY;
 
-        // Пара отдельных пикселей под основанием — классические «брызги».
-        final int spray = 2 + random.nextInt(3);
-        for (int i = 0; i < spray; i++) {
-            final int x = minX + 3 + random.nextInt(Math.max(1, maxX - minX - 5));
-            final int y = Math.min(height - 1, maxY + 1 + random.nextInt(2));
-            if (!solid[y * width + x]) {
-                solid[y * width + x] = true;
-                detached[y * width + x] = true;
+            for (int p = 0; p < c.puffCount; p++) {
+                final float px = driftX + c.puffOffsetX[p] * c.baseWidth;
+                final float py = baseY + c.puffOffsetY[p] * c.baseHeight;
+                final float r = c.puffRadius[p] * c.baseHeight;
+
+                mistPaint.setColor(0x38FFFFFF);
+                canvas.drawCircle(px, py - r * 0.14f, r * 1.15f, mistPaint);
+                mistPaint.setColor(0x2EE8D8F5);
+                canvas.drawCircle(px, py + r * 0.24f, r * 1.05f, mistPaint);
             }
         }
     }
 
-    /** Один сужающийся хвостик с разрывом и 2–4 отдельными пикселями на конце. */
-    private static void addHorizontalTail(boolean[] solid, boolean[] tail, boolean[] detached,
-                                          int width, int height, int dir, int row, Random random) {
-        int y = row;
-        int edge = -1;
-        for (int attempt = 0; attempt < 7 && edge < 0; attempt++) {
-            final int candidate = row + ((attempt & 1) == 0 ? (attempt + 1) / 2 : -(attempt + 1) / 2);
-            if (candidate < 0 || candidate >= height) {
-                continue;
+    private static void drawVolumetricLayer(Canvas canvas, CloudNode[] layer, float width, float height,
+                                            float phase, float scrollPx, float speedMult, float parallaxFactor) {
+        final float parallaxY = -scrollPx * parallaxFactor;
+        for (int i = 0; i < layer.length; i++) {
+            final CloudNode c = layer[i];
+            final float span = width + c.baseWidth * 1.8f;
+            final float driftX = wrapDrift(phase * c.driftSpeed * speedMult + c.phaseOffset, span)
+                    - c.baseWidth * 0.9f;
+            final float swayY = (float) Math.sin((phase * 2f + c.phaseOffset * 1.3f) * Math.PI * 2.0)
+                    * AndroidUtilities.dpf2(4.0f);
+            final float baseY = c.anchorY * height + swayY + parallaxY;
+
+            for (int p = 0; p < c.puffCount; p++) {
+                final float px = driftX + c.puffOffsetX[p] * c.baseWidth;
+                final float py = baseY + c.puffOffsetY[p] * c.baseHeight;
+                final float r = c.puffRadius[p] * c.baseHeight;
+
+                puffPaint.setColor(0x66E7C6DC);
+                canvas.drawCircle(px, py + r * 0.34f, r * 0.96f, puffPaint);
+                puffPaint.setColor(0x52CBBCE8);
+                canvas.drawCircle(px + r * 0.12f, py + r * 0.46f, r * 0.82f, puffPaint);
+
+                puffPaint.setColor(0xCCF7FBFF);
+                canvas.drawCircle(px, py + r * 0.04f, r * 0.94f, puffPaint);
+
+                puffPaint.setColor(0xEEFFFFFF);
+                canvas.drawCircle(px - r * 0.12f, py - r * 0.26f, r * 0.72f, puffPaint);
             }
-            final int found = findEdge(solid, width, candidate, dir);
-            if (found >= 0) {
-                edge = found;
-                y = candidate;
-            }
-        }
-        if (edge < 0) {
-            return;
-        }
-        final int length = 3 + random.nextInt(3);
-        final int thickness = 1 + random.nextInt(3);
-        for (int k = 0; k < length; k++) {
-            final int rows = Math.max(1, thickness - (k * thickness) / length);
-            final int xx = edge + dir * k;
-            for (int t = 0; t < rows; t++) {
-                final int yy = y + t;
-                if (xx < 0 || xx >= width || yy < 0 || yy >= height) {
-                    continue;
-                }
-                final int idx = yy * width + xx;
-                if (!solid[idx]) {
-                    solid[idx] = true;
-                    tail[idx] = true;
-                }
-            }
-        }
-        // Разрыв в один пиксель, затем отдельные отстоящие пиксели на конце.
-        final int startX = edge + dir * (length + 1);
-        final int count = 2 + random.nextInt(3);
-        for (int d = 0; d < count; d++) {
-            final int xx = startX + dir * d * 2;
-            final int yy = y + (d & 1);
-            if (xx < 0 || xx >= width || yy < 0 || yy >= height) {
-                continue;
-            }
-            final int idx = yy * width + xx;
-            solid[idx] = true;
-            detached[idx] = true;
         }
     }
 
-    /** Возвращает координату пикселя сразу за силуэтом в строке {@code y}. */
-    private static int findEdge(boolean[] solid, int width, int y, int dir) {
-        final int row = y * width;
-        if (dir < 0) {
-            for (int x = 0; x < width; x++) {
-                if (solid[row + x]) {
-                    return x - 1;
-                }
-            }
-        } else {
-            for (int x = width - 1; x >= 0; x--) {
-                if (solid[row + x]) {
-                    return x + 1;
-                }
+    private static void drawNearLayer(Canvas canvas, CloudNode[] layer, float width, float height,
+                                      float phase, float scrollPx, float speedMult, float parallaxFactor) {
+        final float parallaxY = -scrollPx * parallaxFactor;
+        for (int i = 0; i < layer.length; i++) {
+            final CloudNode c = layer[i];
+            final float span = width + c.baseWidth * 1.8f;
+            final float driftX = wrapDrift(phase * c.driftSpeed * speedMult * 1.45f + c.phaseOffset, span)
+                    - c.baseWidth * 0.9f;
+            final float swayY = (float) Math.sin((phase * 3f + c.phaseOffset * 1.7f) * Math.PI * 2.0)
+                    * AndroidUtilities.dpf2(6.0f);
+            final float baseY = c.anchorY * height + swayY + parallaxY;
+
+            for (int p = 0; p < c.puffCount; p++) {
+                final float px = driftX + c.puffOffsetX[p] * c.baseWidth;
+                final float py = baseY + c.puffOffsetY[p] * c.baseHeight;
+                final float rx = c.puffRadius[p] * c.baseHeight * 1.18f;
+                final float ry = c.puffRadius[p] * c.baseHeight * 0.78f;
+
+                puffRect.set(px - rx, py - ry, px + rx, py + ry);
+                puffPaint.setColor(0x78FFFFFF);
+                canvas.drawOval(puffRect, puffPaint);
+
+                puffRect.set(px - rx * 0.7f, py + ry * 0.15f, px + rx * 0.8f, py + ry * 0.95f);
+                puffPaint.setColor(0x45F3C9DC);
+                canvas.drawOval(puffRect, puffPaint);
             }
         }
-        return -1;
     }
 
+    private static void updateBlurBuffer(float width, float height, float phase, float scrollPx,
+                                         int viewportW, int viewportH) {
+        blurViewportWidth = viewportW;
+        blurViewportHeight = viewportH;
+
+        final int bw = Math.max(1, viewportW / BLUR_SCALE);
+        final int bh = Math.max(1, viewportH / BLUR_SCALE);
+        if (blurBitmap == null || blurBitmap.isRecycled()
+                || blurBitmap.getWidth() != bw || blurBitmap.getHeight() != bh) {
+            if (blurBitmap != null && !blurBitmap.isRecycled()) {
+                blurBitmap.recycle();
+            }
+            blurBitmap = Bitmap.createBitmap(bw, bh, Bitmap.Config.ARGB_8888);
+            blurCanvas = new Canvas(blurBitmap);
+        }
+
+        blurBitmap.eraseColor(Color.TRANSPARENT);
+        final int saveCount = blurCanvas.save();
+        blurCanvas.scale(1f / BLUR_SCALE, 1f / BLUR_SCALE);
+        drawSkyAndClouds(blurCanvas, width, height, phase, scrollPx);
+        blurCanvas.restoreToCount(saveCount);
+
+        Utilities.stackBlurBitmap(blurBitmap, STACK_BLUR_RADIUS);
+    }
+
+    private static CloudNode[] createLayer(int count, long seed,
+                                           float minWidthFactor, float maxWidthFactor,
+                                           float minHeightFactor, float maxHeightFactor) {
+        final Random random = new Random(seed);
+        final CloudNode[] nodes = new CloudNode[count];
+        final int screenW = AndroidUtilities.displaySize.x > 0 ? AndroidUtilities.displaySize.x : 1080;
+        final int screenH = AndroidUtilities.displaySize.y > 0 ? AndroidUtilities.displaySize.y : 2400;
+
+        for (int i = 0; i < count; i++) {
+            final float wFactor = minWidthFactor + random.nextFloat() * (maxWidthFactor - minWidthFactor);
+            final float hFactor = minHeightFactor + random.nextFloat() * (maxHeightFactor - minHeightFactor);
+            final int puffs = 4 + random.nextInt(3);
+            final float[] ox = new float[puffs];
+            final float[] oy = new float[puffs];
+            final float[] rad = new float[puffs];
+
+            for (int p = 0; p < puffs; p++) {
+                final float t = puffs > 1 ? p / (float) (puffs - 1) : 0.5f;
+                final float dome = (float) Math.sin(t * Math.PI);
+                ox[p] = -0.32f + t * 0.64f + (random.nextFloat() - 0.5f) * 0.06f;
+                oy[p] = 0.08f - dome * 0.22f + (random.nextFloat() - 0.5f) * 0.06f;
+                rad[p] = (0.34f + 0.16f * dome) * (0.85f + 0.30f * random.nextFloat());
+            }
+
+            final float anchorY = 0.10f + (i / (float) Math.max(1, count)) * 0.78f
+                    + (random.nextFloat() - 0.5f) * 0.06f;
+            final float phaseOffset = i / (float) count + random.nextFloat() * 0.15f;
+            final float driftSpeed = (screenW + screenH * 0.4f) * (0.75f + random.nextFloat() * 0.5f);
+
+            nodes[i] = new CloudNode(
+                    screenW * wFactor,
+                    screenH * hFactor,
+                    clamp01(anchorY),
+                    phaseOffset,
+                    driftSpeed,
+                    puffs,
+                    ox,
+                    oy,
+                    rad
+            );
+        }
+        return nodes;
+    }
+
+    private static float wrapDrift(float distancePx, float spanPx) {
+        if (spanPx <= 1f) {
+            return 0f;
+        }
+        float mod = distancePx % spanPx;
+        if (mod < 0f) {
+            mod += spanPx;
+        }
+        return mod;
+    }
+
+    private static float clamp01(float v) {
+        if (v < 0f) return 0f;
+        if (v > 1f) return 1f;
+        return v;
+    }
+
+    private static final class CloudNode {
+        final float baseWidth;
+        final float baseHeight;
+        final float anchorY;
+        final float phaseOffset;
+        final float driftSpeed;
+        final int puffCount;
+        final float[] puffOffsetX;
+        final float[] puffOffsetY;
+        final float[] puffRadius;
+
+        CloudNode(float baseWidth, float baseHeight, float anchorY, float phaseOffset,
+                  float driftSpeed, int puffCount, float[] puffOffsetX,
+                  float[] puffOffsetY, float[] puffRadius) {
+            this.baseWidth = baseWidth;
+            this.baseHeight = baseHeight;
+            this.anchorY = anchorY;
+            this.phaseOffset = phaseOffset;
+            this.driftSpeed = driftSpeed;
+            this.puffCount = puffCount;
+            this.puffOffsetX = puffOffsetX;
+            this.puffOffsetY = puffOffsetY;
+            this.puffRadius = puffRadius;
+        }
+    }
 }

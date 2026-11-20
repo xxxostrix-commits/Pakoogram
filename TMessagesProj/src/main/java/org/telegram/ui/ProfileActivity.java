@@ -384,6 +384,9 @@ public class ProfileActivity extends BaseFragment implements NotificationCenter.
     // Pakoogram: пиксель-арт облака, 24-секторная аура и стекло информационных карточек.
     private float pakoogramDreamPhase;
     private ValueAnimator pakoogramDreamAnimator;
+    private final DreamGlassEngine pakoogramGlassEngine = new DreamGlassEngine();
+    private long pakoogramLastFrameNanos = 0L;
+    private final Paint pakoogramDividerPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final RectF pakoogramInfoGlassRect = new RectF();
     private final RectF pakoogramInfoGlassChildRect = new RectF();
     private final RectF pakoogramInfoGlassListRect = new RectF();
@@ -3247,6 +3250,21 @@ public class ProfileActivity extends BaseFragment implements NotificationCenter.
 
             @Override
             public boolean dispatchTouchEvent(MotionEvent ev) {
+                if (PakoogramConfig.isAdaptiveChatThemeEnabled()) {
+                    // Pakoogram: пружины нажатия и блик стеклянных карточек следуют за пальцем.
+                    switch (ev.getActionMasked()) {
+                        case MotionEvent.ACTION_DOWN:
+                            pakoogramGlassEngine.onTouchDown(ev.getX(), ev.getY());
+                            break;
+                        case MotionEvent.ACTION_MOVE:
+                            pakoogramGlassEngine.onTouchMove(ev.getX(), ev.getY());
+                            break;
+                        case MotionEvent.ACTION_UP:
+                        case MotionEvent.ACTION_CANCEL:
+                            pakoogramGlassEngine.onTouchUp();
+                            break;
+                    }
+                }
                 if (pinchToZoomHelper.isInOverlayMode()) {
                     return pinchToZoomHelper.onTouchEvent(ev);
                 }
@@ -3545,8 +3563,6 @@ public class ProfileActivity extends BaseFragment implements NotificationCenter.
                 // Pakoogram: градиент и ореол аватарки живут на самом нижнем слое экрана —
                 // под списком и шапкой, поэтому раскрывающееся фото их не перекрывает.
                 drawPakoogramScreenBackground(canvas);
-                // Pakoogram: пиксель-арт облака и 24-секторная аура аватарки.
-                drawPakoogramDreamLayer(canvas);
                 // Pakoogram: уменьшенный размытый снимок этих же слоёв для стекла.
                 updatePakoogramBlurBuffer();
                 // Pakoogram: матовое стекло информационных карточек профиля.
@@ -4131,6 +4147,9 @@ public class ProfileActivity extends BaseFragment implements NotificationCenter.
             actionsView = new ProfileActionsView(context, dp(74));
             // Pakoogram: матовое стекло под кнопками «Чат / Звук / Звонок / Видео».
             actionsView.setPakoogramDreamGlass(PakoogramConfig.isAdaptiveChatThemeEnabled());
+            // Pakoogram: тот же движок стекла и вьюпорт, что у карточек профиля.
+            actionsView.setPakoogramGlassEngine(pakoogramGlassEngine);
+            actionsView.setPakoogramGlassViewport(fragmentView);
             setActionsMode();
             updateNotifications(false);
 
@@ -6207,7 +6226,6 @@ public class ProfileActivity extends BaseFragment implements NotificationCenter.
             // Pakoogram: стеклянные кнопки шапки («<-» и «⋮») и музыкальная
             // плашка захватывают и размывают облака, а не обрезают их.
             drawPakoogramScreenBackground(c);
-            drawPakoogramDreamLayer(c);
             final ViewGroup root = (ViewGroup) fragmentView;
             // over the media only they are under the glass: the rows above them would show through the pages' overscan
             final float mediaProgress = sharedMediaLayout != null && sharedMediaLayout.getParent() == listView ? mediaHeaderAnimationProgress : 0f;
@@ -6234,6 +6252,22 @@ public class ProfileActivity extends BaseFragment implements NotificationCenter.
         };
         setupHeaderGlass();
 
+        if (PakoogramConfig.isAdaptiveChatThemeEnabled() && listView != null) {
+            // Pakoogram: скролл двигает облака и подкручивает блик на кромке стекла.
+            listView.addOnScrollListener(new RecyclerView.OnScrollListener() {
+                @Override
+                public void onScrolled(RecyclerView recyclerView, int dx, int dy) {
+                    if (dy == 0) {
+                        return;
+                    }
+                    DreamCloudsEngine.onScrollDelta(-dy);
+                    pakoogramGlassEngine.onScroll(-dy);
+                    if (fragmentView != null) {
+                        fragmentView.invalidate();
+                    }
+                }
+            });
+        }
         ViewCompat.setOnApplyWindowInsetsListener(fragmentView, this::onApplyWindowInsets);
         refreshPakoogramPalette();
         applyPakoogramProfilePalette();
@@ -10450,12 +10484,11 @@ public class ProfileActivity extends BaseFragment implements NotificationCenter.
         int actionBarColor = actionBarAnimationColorFrom != 0 ? actionBarAnimationColorFrom : getThemedColor(Theme.key_actionBarDefault);
         int actionBarColor2 = actionBarColor;
         actionBarColor = ColorUtils.setAlphaComponent(actionBarColor, 0);
-        if (pakoogramPalette != null && !topView.hasColorById) {
-            // Pakoogram: при прокрутке шапка остаётся прозрачной — под ней единый
-            // градиентный фон экрана, поэтому нет горизонтального шва.
-            final int pakoogramBackground = pakoogramPalette.getProfileBackgroundColor(Theme.isCurrentThemeDark());
+        if (PakoogramConfig.isAdaptiveChatThemeEnabled() && !topView.hasColorById) {
+            // Pakoogram: шапка прозрачна, а таймер использует чистый фон темы —
+            // без оттенка аватарки.
             topView.setBackgroundColor(Color.TRANSPARENT);
-            timerDrawable.setBackgroundColor(pakoogramBackground);
+            timerDrawable.setBackgroundColor(Theme.getColor(Theme.key_windowBackgroundGray));
         } else {
             topView.setBackgroundColor(ColorUtils.blendARGB(actionBarColor, color, progress));
             timerDrawable.setBackgroundColor(ColorUtils.blendARGB(actionBarColor2, color, progress));
@@ -10979,11 +11012,12 @@ public class ProfileActivity extends BaseFragment implements NotificationCenter.
     private final RectF previousAvatarRect = new RectF();
 
     /**
-     * Pakoogram: чистый фон экрана профиля на самом нижнем слое {@code fragmentView}.
+     * Pakoogram: небесный фон экрана профиля на самом нижнем слое {@code fragmentView}.
      *
-     * <p>Используется цвет текущей темы ({@link Theme#key_windowBackgroundGray}),
-     * без оттенка палитры аватарки: облака и 24-секторный ореол рисуются отдельным
-     * слоем {@link #drawPakoogramDreamLayer(Canvas)}.</p>
+     * <p>Пружины стекла шагают по реальному dt кадра; поверх тематической подложки
+     * рисуется градиентное небо и объёмные облака нового движка
+     * {@link DreamCloudsEngine}. Аура аватарки добавляется слоем
+     * {@link #drawPakoogramDreamLayer(Canvas)}.</p>
      */
     private void drawPakoogramScreenBackground(Canvas canvas) {
         if (!PakoogramConfig.isAdaptiveChatThemeEnabled() || fragmentView == null) {
@@ -10994,22 +11028,46 @@ public class ProfileActivity extends BaseFragment implements NotificationCenter.
         if (width <= 0 || height <= 0) {
             return;
         }
-        // Pakoogram: фон профиля — чистый цвет текущей темы, без оттенка аватарки.
+        // Pakoogram: базовая подложка темы — облака закрывают её градиентом неба.
         pakoogramScreenPaint.setShader(null);
-        pakoogramScreenPaint.setColor(Theme.getColor(Theme.key_windowBackgroundGray, resourcesProvider));
+        pakoogramScreenPaint.setColor(Theme.getColor(Theme.key_windowBackgroundGray));
         canvas.drawRect(0, 0, width, height, pakoogramScreenPaint);
+
+        // Pakoogram: стекло карточек живёт на пружинах — шагаем по реальному dt
+        // и просим перерисовку, пока пружины не успокоятся.
+        final long now = System.nanoTime();
+        final float dt = pakoogramLastFrameNanos > 0L
+                ? Math.min(0.05f, (now - pakoogramLastFrameNanos) / 1_000_000_000f)
+                : 1f / 120f;
+        pakoogramLastFrameNanos = now;
+        if (pakoogramGlassEngine.step(dt)) {
+            fragmentView.invalidate();
+        }
+
+        drawPakoogramCloudLayer(canvas);
+        // Pakoogram: 24-секторный ореол поверх облаков.
+        drawPakoogramDreamLayer(canvas);
+    }
+
+    /** Pakoogram: только небо и облака — без пружин, чтобы не шагать дважды в буфере размытия. */
+    private void drawPakoogramCloudLayer(Canvas canvas) {
+        final int width = fragmentView.getMeasuredWidth();
+        final int height = fragmentView.getMeasuredHeight();
+        if (width <= 0 || height <= 0) {
+            return;
+        }
+        DreamCloudsEngine.draw(canvas, width, height, pakoogramDreamPhase);
     }
 
     /**
-     * Pakoogram: облака и круговое 24-секторное свечение вокруг аватарки.
+     * Pakoogram: круговое 24-секторное свечение вокруг аватарки поверх облаков.
      *
-     * <p>Слой рисуется на самом низу {@code fragmentView}: облака распределены по
-     * всей высоте экрана, но не заходят в круг радиусом {@code radius * 1.65f}
-     * вокруг центра аватарки. Свечение строится по цветам битмапа
-     * {@code avatarImage} и «дышит» вместе с общей фазой анимации.</p>
+     * <p>Свечение строится по цветам битмапа {@code avatarImage} и «дышит»
+     * вместе с общей фазой анимации.</p>
      */
     private void drawPakoogramDreamLayer(Canvas canvas) {
-        if (!PakoogramConfig.isAdaptiveChatThemeEnabled() || fragmentView == null) {
+        if (!PakoogramConfig.isAdaptiveChatThemeEnabled() || fragmentView == null
+                || avatarImage == null) {
             return;
         }
         final int width = fragmentView.getMeasuredWidth();
@@ -11020,8 +11078,7 @@ public class ProfileActivity extends BaseFragment implements NotificationCenter.
         float cx = width * 0.5f;
         float cy = 0f;
         float avatarRadius = 0f;
-        if (avatarImage != null
-                && ViewPositionWatcher.computeRectInParent(avatarImage, fragmentView, pakoogramScreenAvatarRect)) {
+        if (ViewPositionWatcher.computeRectInParent(avatarImage, fragmentView, pakoogramScreenAvatarRect)) {
             final float avatarWidth = pakoogramScreenAvatarRect.width();
             final float avatarHeight = pakoogramScreenAvatarRect.height();
             if (avatarWidth > 0f && avatarHeight > 0f) {
@@ -11030,9 +11087,7 @@ public class ProfileActivity extends BaseFragment implements NotificationCenter.
                 avatarRadius = Math.min(avatarWidth, avatarHeight) * 0.5f;
             }
         }
-        DreamCloudsEngine.draw(canvas, width, height, cx, cy, avatarRadius,
-                pakoogramDreamPhase, Theme.isCurrentThemeDark());
-        if (avatarRadius <= 0f || avatarImage == null) {
+        if (avatarRadius <= 0f) {
             return;
         }
         final Bitmap avatarBitmap = avatarImage.getImageReceiver().getBitmap();
@@ -11143,10 +11198,27 @@ public class ProfileActivity extends BaseFragment implements NotificationCenter.
         if (pakoogramInfoGlassRect.height() < dp(8)) {
             return;
         }
-        DreamGlassSurface.drawFrostedGlassCard(canvas, pakoogramInfoGlassRect, dp(32),
-                Theme.isCurrentThemeDark(), PakoogramConfig.glassOpacity,
-                pakoogramBlurBitmap, fragmentView.getMeasuredWidth(),
-                fragmentView.getMeasuredHeight());
+        // Pakoogram: стеклянная подложка с размытием облаков и пружинами нажатия.
+        pakoogramGlassEngine.drawGlass(canvas, pakoogramInfoGlassRect, 32f,
+                fragmentView.getMeasuredWidth(), fragmentView.getMeasuredHeight(),
+                PakoogramConfig.glassOpacity);
+
+        // Pakoogram: пастельные разделители строк внутри карточки.
+        pakoogramDividerPaint.setColor(DreamGlassEngine.DIVIDER_COLOR);
+        pakoogramDividerPaint.setStrokeWidth(Math.max(1f, AndroidUtilities.density));
+        for (int i = 0; i < childCount; i++) {
+            final View child = listView.getChildAt(i);
+            final int position = listView.getChildAdapterPosition(child);
+            if (position < firstRow || position > lastRow) {
+                continue;
+            }
+            if (!ViewPositionWatcher.computeRectInParent(child, fragmentView, pakoogramInfoGlassChildRect)) {
+                continue;
+            }
+            final float y = pakoogramInfoGlassChildRect.bottom - dp(2);
+            canvas.drawLine(pakoogramInfoGlassRect.left + dp(24), y,
+                    pakoogramInfoGlassRect.right - dp(24), y, pakoogramDividerPaint);
+        }
     }
 
     /**
@@ -11179,7 +11251,7 @@ public class ProfileActivity extends BaseFragment implements NotificationCenter.
         pakoogramBlurCanvas.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR);
         final int saveCount = pakoogramBlurCanvas.save();
         pakoogramBlurCanvas.scale(1f / PAKOGRAM_BLUR_SCALE, 1f / PAKOGRAM_BLUR_SCALE);
-        drawPakoogramScreenBackground(pakoogramBlurCanvas);
+        drawPakoogramCloudLayer(pakoogramBlurCanvas);
         drawPakoogramDreamLayer(pakoogramBlurCanvas);
         pakoogramBlurCanvas.restoreToCount(saveCount);
         Utilities.stackBlurBitmap(pakoogramBlurBitmap, 10);
@@ -11288,7 +11360,7 @@ public class ProfileActivity extends BaseFragment implements NotificationCenter.
         }
         final boolean dark = Theme.isCurrentThemeDark();
         // Pakoogram: чистый фон текущей темы вместо оттенка аватарки.
-        final int screen = Theme.getColor(Theme.key_windowBackgroundGray, resourcesProvider);
+        final int screen = Theme.getColor(Theme.key_windowBackgroundGray);
 
         if (listView != null) {
             // Pakoogram: список прозрачный — под ним виден единый фон fragmentView,
@@ -11302,9 +11374,9 @@ public class ProfileActivity extends BaseFragment implements NotificationCenter.
             searchListView.setBackgroundColor(screen);
         }
         if (topView != null) {
-            topView.setPakoogramPalette(pakoogramPalette);
-            // Единый фон экрана: topView не рисует ни шапку, ни подложку —
-            // сквозь него виден фон fragmentView, поэтому нет горизонтального шва.
+            // Pakoogram: шапка не окрашивается под аватарку — она остаётся
+            // прозрачной над единым небесным фоном экрана.
+            topView.setPakoogramPalette(null);
             topView.setBackgroundColor(Color.TRANSPARENT);
         }
         if (fragmentView != null) {
@@ -11333,7 +11405,7 @@ public class ProfileActivity extends BaseFragment implements NotificationCenter.
         if (pakoogramPalette == null) {
             return;
         }
-        final int themeBackground = Theme.getColor(Theme.key_windowBackgroundGray, resourcesProvider);
+        final int themeBackground = Theme.getColor(Theme.key_windowBackgroundGray);
         try {
             if (sharedMediaLayout != null) {
                 sharedMediaLayout.setBackgroundColor(themeBackground);
@@ -11358,8 +11430,33 @@ public class ProfileActivity extends BaseFragment implements NotificationCenter.
             if (giftsView != null) {
                 giftsView.update();
             }
+            applyPakoogramTabColors();
         } catch (Exception e) {
             FileLog.e(e);
+        }
+    }
+
+    /** Pakoogram: подписи нижних вкладок — пастельные константы нового стекла. */
+    private void applyPakoogramTabColors() {
+        if (sharedMediaLayout == null || sharedMediaLayout.scrollSlidingTextTabStrip == null) {
+            return;
+        }
+        final View first = sharedMediaLayout.scrollSlidingTextTabStrip.getChildAt(0);
+        if (!(first instanceof ViewGroup)) {
+            return;
+        }
+        final ViewGroup tabs = (ViewGroup) first;
+        for (int i = 0; i < tabs.getChildCount(); i++) {
+            final View tab = tabs.getChildAt(i);
+            if (!(tab instanceof TextView)) {
+                continue;
+            }
+            final Object tag = tab.getTag();
+            final boolean active = tag instanceof Integer
+                    && (Integer) tag == Theme.key_actionBarTabActiveText;
+            ((TextView) tab).setTextColor(active
+                    ? DreamGlassEngine.ACCENT_PASTEL
+                    : DreamGlassEngine.ICON_PASTEL);
         }
     }
 
@@ -14363,6 +14460,23 @@ public class ProfileActivity extends BaseFragment implements NotificationCenter.
             return new RecyclerListView.Holder(view);
         }
 
+        /** Pakoogram: светлые константы текста и иконок поверх стеклянных карточек. */
+        private void tintPakoogramGlassCell(View view) {
+            if (view instanceof TextDetailCell) {
+                final TextDetailCell cell = (TextDetailCell) view;
+                cell.textView.setTextColor(DreamGlassEngine.TEXT_PRIMARY);
+                cell.valueTextView.setTextColor(DreamGlassEngine.TEXT_SECONDARY);
+                cell.rightValueTextView.setTextColor(DreamGlassEngine.TEXT_SUBTITLE);
+            } else if (view instanceof TextCell) {
+                final TextCell cell = (TextCell) view;
+                cell.textView.setTextColor(DreamGlassEngine.TEXT_PRIMARY);
+                cell.valueTextView.setTextColor(DreamGlassEngine.TEXT_SUBTITLE);
+                cell.valueSpoilersTextView.setTextColor(DreamGlassEngine.TEXT_SUBTITLE);
+            } else if (view instanceof TextInfoPrivacyCell) {
+                ((TextInfoPrivacyCell) view).getTextView().setTextColor(DreamGlassEngine.TEXT_SUBTITLE);
+            }
+        }
+
         public void setBackground(View view, int viewType) {
             // Pakoogram: ячейки прозрачны, чтобы глухой прямоугольник
             // windowBackgroundWhite не перекрывал drawPakoogramInfoGlass и облака.
@@ -14393,6 +14507,10 @@ public class ProfileActivity extends BaseFragment implements NotificationCenter.
 
         @Override
         public void onBindViewHolder(RecyclerView.ViewHolder holder, int position) {
+            if (PakoogramConfig.isAdaptiveChatThemeEnabled()) {
+                // Pakoogram: текст и иконки читаемы поверх светлого стекла даже в тёмной теме.
+                tintPakoogramGlassCell(holder.itemView);
+            }
             switch (holder.getItemViewType()) {
                 case VIEW_TYPE_HEADER:
                     HeaderCell headerCell = (HeaderCell) holder.itemView;
@@ -14418,7 +14536,7 @@ public class ProfileActivity extends BaseFragment implements NotificationCenter.
                     } else if (position == botPermissionsHeader) {
                         headerCell.setText(LocaleController.getString(R.string.BotProfilePermissions));
                     }
-                    headerCell.setTextColor(dontApplyPeerColor(getThemedColor(Theme.key_windowBackgroundWhiteBlueHeader), false));
+                    headerCell.setTextColor(DreamGlassEngine.TEXT_SUBTITLE);
                     break;
                 case VIEW_TYPE_TEXT_DETAIL_MULTILINE:
                 case VIEW_TYPE_TEXT_DETAIL_MULTILINE_2:

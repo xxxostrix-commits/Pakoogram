@@ -6,6 +6,7 @@ import static org.telegram.messenger.AndroidUtilities.lerp;
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.graphics.Color;
+import android.graphics.LinearGradient;
 import android.graphics.Paint;
 import android.graphics.Path;
 import android.graphics.RectF;
@@ -126,6 +127,7 @@ public class DreamTransitionEngine {
 
     private final Paint scrimPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint shadowPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final Paint pageShadowPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint cardBgPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint bitmapPaint = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG);
     private boolean lastBackBlurApplied = false;
@@ -149,6 +151,12 @@ public class DreamTransitionEngine {
         scrimPaint.setStyle(Paint.Style.FILL);
         shadowPaint.setStyle(Paint.Style.FILL);
         cardBgPaint.setStyle(Paint.Style.FILL);
+        // Pakoogram: мягкая тень у левого края выезжающей страницы профиля.
+        pageShadowPaint.setShader(new LinearGradient(
+                0f, 0f, dp(28f), 0f,
+                new int[]{0x00000000, 0x3D000000},
+                null, Shader.TileMode.CLAMP
+        ));
     }
 
     /**
@@ -518,13 +526,15 @@ public class DreamTransitionEngine {
                     morphed.setScaleY(1f);
                     morphed.setAlpha(1f);
                 } else {
+                    // Pakoogram: профиль выезжает в полный размер справа налево —
+                    // без масштабирования и без прозрачности.
                     morphed.setPivotX(w * 0.5f);
                     morphed.setPivotY(h * 0.5f);
-                    morphed.setTranslationX(lerp(w * 0.14f, 0f, clampedG));
+                    morphed.setTranslationX(lerp(w, 0f, clampedG));
                     morphed.setTranslationY(0f);
-                    float s = lerp(CONTENT_START_SCALE, 1f, clampedG);
-                    morphed.setScaleX(s);
-                    morphed.setScaleY(s);
+                    morphed.setScaleX(1f);
+                    morphed.setScaleY(1f);
+                    morphed.setAlpha(1f);
                 }
             } else {
                 final float startS = closingFromGesture ? gestureStartScale : 1f;
@@ -541,15 +551,15 @@ public class DreamTransitionEngine {
                     morphed.setScaleY(1f);
                     morphed.setAlpha(1f);
                 } else {
-                    // Погасание только в последние 15% закрытия — без «полупрозрачной каши».
-                    morphed.setAlpha(closeC > 0.85f ? lerp(1f, 0f, (closeC - 0.85f) / 0.15f) : 1f);
+                    // Pakoogram: закрываемый экран уезжает целиком за правый край,
+                    // не зависая на 0.35 * w и не растворяясь.
+                    morphed.setAlpha(1f);
                     morphed.setPivotX(w * 0.5f);
                     morphed.setPivotY(h * 0.5f);
-                    morphed.setTranslationX(lerp(startX, w * 0.35f, closeT));
-                    morphed.setTranslationY(lerp(startY, 0f, closeT));
-                    float s = lerp(startS, CONTENT_START_SCALE, closeT);
-                    morphed.setScaleX(s);
-                    morphed.setScaleY(s);
+                    morphed.setTranslationX(lerp(startX, w, closeT));
+                    morphed.setTranslationY(0f);
+                    morphed.setScaleX(1f);
+                    morphed.setScaleY(1f);
                 }
             }
         }
@@ -650,11 +660,26 @@ public class DreamTransitionEngine {
             morphClipPath.addRoundRect(tmpRect, radius, radius, Path.Direction.CW);
             canvas.clipPath(morphClipPath);
 
-            // Плотный фон темы внутри карточки — без прозрачных дыр в содержимом.
-            cardBgPaint.setColor(Theme.getColor(Theme.key_windowBackgroundWhite));
-            canvas.drawRect(tmpRect, cardBgPaint);
+            if (useContainerMorph) {
+                // Плотный фон карточки — без прозрачных дыр в содержимом.
+                cardBgPaint.setColor(Theme.getColor(Theme.key_windowBackgroundWhite));
+                canvas.drawRect(tmpRect, cardBgPaint);
+            } else {
+                // Pakoogram: профиль полностью перекрывает переписку чата под ним —
+                // 100% непрозрачный фон темы вместо полупрозрачных швов.
+                cardBgPaint.setColor(0xFF000000 | Theme.getColor(Theme.key_windowBackgroundGray));
+                canvas.drawRect(tmpRect, cardBgPaint);
 
-            if (!useContainerMorph) {
+                // Pakoogram: мягкая тень по левому краю выезжающей страницы.
+                final float pageLeft = child.getTranslationX();
+                final float shadowWidth = dp(28f);
+                if (pageLeft > 0.5f && pageLeft < w) {
+                    final int shadowSave = canvas.save();
+                    canvas.translate(Math.max(-shadowWidth, pageLeft - shadowWidth), 0f);
+                    canvas.drawRect(0f, 0f, shadowWidth, h, pageShadowPaint);
+                    canvas.restoreToCount(shadowSave);
+                }
+
                 boolean drawn = invoker.draw(canvas, child, drawingTime);
                 canvas.restoreToCount(saveCount);
                 return drawn;
