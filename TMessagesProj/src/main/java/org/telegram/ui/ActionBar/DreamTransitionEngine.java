@@ -3,6 +3,7 @@ package org.telegram.ui.ActionBar;
 import static org.telegram.messenger.AndroidUtilities.dp;
 import static org.telegram.messenger.AndroidUtilities.lerp;
 
+import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Paint;
@@ -71,6 +72,17 @@ public class DreamTransitionEngine {
     private float capturedCardRadiusPx = 0f;
     private boolean hasCapturedSource = false;
 
+    // Pakoogram: снимок нажатой карточки чата (DialogCell) для кроссфейда внутри
+    // Container Transform. capturedCardBitmap снимается в captureSourceView и живёт
+    // до ближайшего animateOpen; lastOpenedCardBitmap хранится до обратного закрытия
+    // чата, а activeCardBitmap рисуется текущим переходом в drawChildWithMorph.
+    @Nullable
+    private Bitmap capturedCardBitmap;
+    @Nullable
+    private Bitmap lastOpenedCardBitmap;
+    @Nullable
+    private Bitmap activeCardBitmap;
+
     // Pakoogram: координаты плашки, в которую открывался чат. Храним их отдельно,
     // потому что capturedSourceRect очищается сразу после animateOpen, а обратный
     // морфинг при закрытии чата должен сжимать экран именно в эту плашку.
@@ -115,6 +127,7 @@ public class DreamTransitionEngine {
     private final Paint scrimPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint shadowPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint cardBgPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final Paint bitmapPaint = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG);
     private boolean lastBackBlurApplied = false;
     private float lastBlurRadius = -1f;
 
@@ -166,6 +179,21 @@ public class DreamTransitionEngine {
             capturedDialogId = dialogId;
             capturedCardRadiusPx = dp(PakoogramConfig.getChatCardCornerRadius());
             hasCapturedSource = true;
+
+            // Pakoogram: снимаем Bitmap карточки без боковых отступов капсулы, чтобы при
+            // Container Transform из неё «перетекал» живой чат, а не вырезалась скважина.
+            // recycle() вручную не вызываем: снимок может использоваться в соседнем кадре,
+            // старую память освободит GC.
+            int cardW = Math.round(right - left);
+            int cardH = Math.round(bottom - top);
+            capturedCardBitmap = null;
+            if (cardW > 0 && cardH > 0) {
+                Bitmap bmp = Bitmap.createBitmap(cardW, cardH, Bitmap.Config.ARGB_8888);
+                Canvas bmpCanvas = new Canvas(bmp);
+                bmpCanvas.translate(-dp(PAKOGRAM_CARD_MARGIN_HORIZONTAL_DP), -dp(PAKOGRAM_CARD_MARGIN_VERTICAL_DP));
+                cell.draw(bmpCanvas);
+                capturedCardBitmap = bmp;
+            }
         } catch (Throwable e) {
             FileLog.e(e);
             clearCapturedSource();
@@ -176,6 +204,7 @@ public class DreamTransitionEngine {
         capturedSourceRect.setEmpty();
         capturedDialogId = 0L;
         capturedCardRadiusPx = 0f;
+        capturedCardBitmap = null;
         hasCapturedSource = false;
     }
 
@@ -212,10 +241,15 @@ public class DreamTransitionEngine {
             lastOpenedCardRadiusPx = capturedCardRadiusPx;
             hasLastOpenedSource = true;
             useContainerMorph = true;
+            // Pakoogram: снимок карточки забираем ДО clearCapturedSource(), иначе
+            // кроссфейд в drawChildWithMorph будет нечем рисовать.
+            activeCardBitmap = capturedCardBitmap;
+            lastOpenedCardBitmap = capturedCardBitmap;
             clearCapturedSource();
         } else {
             activeSourceRect.setEmpty();
             activeCardRadiusPx = dp(CARD_RADIUS_DP);
+            activeCardBitmap = null;
             useContainerMorph = false;
         }
 
@@ -260,10 +294,13 @@ public class DreamTransitionEngine {
             activeSourceRect.set(lastOpenedSourceRect);
             activeDialogId = lastOpenedDialogId;
             activeCardRadiusPx = lastOpenedCardRadiusPx;
+            // Pakoogram: возвращаем снимок карточки, снятый при открытии этого чата.
+            activeCardBitmap = lastOpenedCardBitmap;
             useContainerMorph = true;
         } else {
             activeSourceRect.setEmpty();
             activeCardRadiusPx = dp(CARD_RADIUS_DP);
+            activeCardBitmap = null;
             useContainerMorph = false;
         }
 
@@ -325,10 +362,13 @@ public class DreamTransitionEngine {
             activeSourceRect.set(lastOpenedSourceRect);
             activeDialogId = lastOpenedDialogId;
             activeCardRadiusPx = lastOpenedCardRadiusPx;
+            // Pakoogram: снимок карточки нужен и при закрытии из жеста «Назад».
+            activeCardBitmap = lastOpenedCardBitmap;
             useContainerMorph = true;
         } else {
             activeSourceRect.setEmpty();
             activeCardRadiusPx = dp(CARD_RADIUS_DP);
+            activeCardBitmap = null;
             useContainerMorph = false;
         }
 
@@ -467,13 +507,16 @@ public class DreamTransitionEngine {
                 // Container Transform и Fallback при открытии всегда полностью непрозрачны.
                 morphed.setAlpha(1f);
                 if (useContainerMorph) {
+                    // Pakoogram: Container Transform целиком рисует drawChildWithMorph
+                    // напрямую на Canvas, поэтому View-трансформы нейтральны — иначе
+                    // карточка масштабировалась бы дважды.
                     morphed.setPivotX(w * 0.5f);
-                    morphed.setPivotY(activeSourceRect.centerY());
+                    morphed.setPivotY(h * 0.5f);
                     morphed.setTranslationX(0f);
                     morphed.setTranslationY(0f);
-                    float s = lerp(CONTENT_START_SCALE, 1f, clampedG);
-                    morphed.setScaleX(s);
-                    morphed.setScaleY(s);
+                    morphed.setScaleX(1f);
+                    morphed.setScaleY(1f);
+                    morphed.setAlpha(1f);
                 } else {
                     morphed.setPivotX(w * 0.5f);
                     morphed.setPivotY(h * 0.5f);
@@ -484,20 +527,22 @@ public class DreamTransitionEngine {
                     morphed.setScaleY(s);
                 }
             } else {
-                // Погасание только в последние 15% закрытия — без «полупрозрачной каши».
-                morphed.setAlpha(closeC > 0.85f ? lerp(1f, 0f, (closeC - 0.85f) / 0.15f) : 1f);
                 final float startS = closingFromGesture ? gestureStartScale : 1f;
                 final float startX = closingFromGesture ? gestureStartTx : 0f;
                 final float startY = closingFromGesture ? gestureStartTy : 0f;
                 if (useContainerMorph) {
+                    // Pakoogram: сжатие обратно в карточку делает drawChildWithMorph,
+                    // поэтому View остаётся без сдвигов/масштаба и полностью непрозрачным.
                     morphed.setPivotX(w * 0.5f);
-                    morphed.setPivotY(activeSourceRect.centerY());
-                    morphed.setTranslationX(lerp(startX, 0f, closeT));
-                    morphed.setTranslationY(lerp(startY, 0f, closeT));
-                    float s = lerp(startS, CONTENT_START_SCALE, closeT);
-                    morphed.setScaleX(s);
-                    morphed.setScaleY(s);
+                    morphed.setPivotY(h * 0.5f);
+                    morphed.setTranslationX(0f);
+                    morphed.setTranslationY(0f);
+                    morphed.setScaleX(1f);
+                    morphed.setScaleY(1f);
+                    morphed.setAlpha(1f);
                 } else {
+                    // Погасание только в последние 15% закрытия — без «полупрозрачной каши».
+                    morphed.setAlpha(closeC > 0.85f ? lerp(1f, 0f, (closeC - 0.85f) / 0.15f) : 1f);
                     morphed.setPivotX(w * 0.5f);
                     morphed.setPivotY(h * 0.5f);
                     morphed.setTranslationX(lerp(startX, w * 0.35f, closeT));
@@ -571,11 +616,12 @@ public class DreamTransitionEngine {
                 float startR = w;
                 float startB = h;
                 if (!opening && closingFromGesture) {
-                    // При закрытии из жеста стартовый прямоугольник сдвинут вместе с пальцем.
-                    startL = Math.max(0f, gestureStartTx);
-                    startT = Math.max(0f, gestureStartTy);
-                    startR = w + Math.max(0f, gestureStartTx);
-                    startB = h + Math.max(0f, gestureStartTy);
+                    // При закрытии из жеста конечный прямоугольник совпадает с тем,
+                    // в котором палец «держал» экран: сдвиг + масштаб жеста.
+                    startL = gestureStartTx;
+                    startT = gestureStartTy;
+                    startR = gestureStartTx + w * gestureStartScale;
+                    startB = gestureStartTy + h * gestureStartScale;
                 }
                 tmpRect.set(
                         lerp(activeSourceRect.left, startL, morphT),
@@ -608,7 +654,38 @@ public class DreamTransitionEngine {
             cardBgPaint.setColor(Theme.getColor(Theme.key_windowBackgroundWhite));
             canvas.drawRect(tmpRect, cardBgPaint);
 
-            boolean drawn = invoker.draw(canvas, child, drawingTime);
+            if (!useContainerMorph) {
+                boolean drawn = invoker.draw(canvas, child, drawingTime);
+                canvas.restoreToCount(saveCount);
+                return drawn;
+            }
+
+            // Pakoogram: живой чат (шапка + переписка) привязан к верху карточки и
+            // масштабируется вместе с ней, а снимок DialogCell плавно растворяется поверх.
+            boolean drawn = false;
+            float contentAlpha = MathUtils.clamp((morphT - 0.10f) / 0.38f, 0f, 1f);
+            if (contentAlpha > 0.01f) {
+                int contentSave = canvas.save();
+                canvas.translate(tmpRect.left, tmpRect.top);
+                float uniformScale = Math.max(0.05f, tmpRect.width() / w);
+                canvas.scale(uniformScale, uniformScale);
+                if (contentAlpha < 0.99f) {
+                    canvas.saveLayerAlpha(0f, 0f, w, h, Math.round(255f * contentAlpha));
+                }
+                drawn = invoker.draw(canvas, child, drawingTime);
+                canvas.restoreToCount(contentSave);
+            }
+
+            float cardAlpha = 1f - MathUtils.clamp(morphT / 0.42f, 0f, 1f);
+            if (activeCardBitmap != null && !activeCardBitmap.isRecycled() && cardAlpha > 0.01f) {
+                int bmpSave = canvas.save();
+                canvas.translate(tmpRect.left, tmpRect.top);
+                float snapScale = tmpRect.width() / Math.max(1f, (float) activeCardBitmap.getWidth());
+                canvas.scale(snapScale, snapScale);
+                bitmapPaint.setAlpha(Math.round(255f * cardAlpha));
+                canvas.drawBitmap(activeCardBitmap, 0f, 0f, bitmapPaint);
+                canvas.restoreToCount(bmpSave);
+            }
             canvas.restoreToCount(saveCount);
             return drawn;
         }
@@ -664,6 +741,9 @@ public class DreamTransitionEngine {
         activeSourceRect.setEmpty();
         activeDialogId = 0L;
         activeCardRadiusPx = 0f;
+        // activeCardBitmap сбрасываем, а lastOpenedCardBitmap оставляем —
+        // он нужен для обратного закрытия чата в карточку.
+        activeCardBitmap = null;
 
         // Pakoogram: снимаем переопределение ролей слоёв после жеста и обнуляем
         // трансформы, которые могли быть применены к «перевёрнутым» контейнерам.
